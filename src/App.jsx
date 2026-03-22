@@ -122,7 +122,7 @@ export default function FinansApp() {
         const base64 = ev.target.result.split(",")[1];
         const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
         const res = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -275,7 +275,7 @@ Sadece JSON yaz, başka hiçbir şey yazma.` }
 
         const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
         const res = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
