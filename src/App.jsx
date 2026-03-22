@@ -80,7 +80,12 @@ function generateAISuggestions(transactions) {
 
 export default function FinansApp() {
   const [tab, setTab] = useState("dashboard");
-  const [transactions, setTransactions] = useState(sampleData);
+  const [transactions, setTransactions] = useState(() => {
+    try {
+      const saved = localStorage.getItem("butcem_transactions");
+      return saved ? JSON.parse(saved) : sampleData;
+    } catch { return sampleData; }
+  });
   const [showModal, setShowModal] = useState(false);
   const [modalType, setModalType] = useState("gider");
   const [form, setForm] = useState({ type: "gider", category: "market", amount: "", desc: "", date: new Date().toISOString().split("T")[0], receipt: null });
@@ -91,6 +96,10 @@ export default function FinansApp() {
   const [ocrLoading, setOcrLoading] = useState(false);
   const [notification, setNotification] = useState(null);
   const fileRef = useRef();
+
+  useEffect(() => {
+    try { localStorage.setItem("butcem_transactions", JSON.stringify(transactions)); } catch {}
+  }, [transactions]);
 
   const showNotif = (msg, color = "#34C759") => {
     setNotification({ msg, color });
