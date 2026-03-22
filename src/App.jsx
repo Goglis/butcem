@@ -96,6 +96,10 @@ export default function FinansApp() {
   const [ocrLoading, setOcrLoading] = useState(false);
   const [notification, setNotification] = useState(null);
   const fileRef = useRef();
+  const uberFileRef = useRef();
+  const [uberLoading, setUberLoading] = useState(false);
+  const [showUberModal, setShowUberModal] = useState(false);
+  const [uberResult, setUberResult] = useState(null);
 
   useEffect(() => {
     try { localStorage.setItem("butcem_transactions", JSON.stringify(transactions)); } catch {}
@@ -104,6 +108,77 @@ export default function FinansApp() {
   const showNotif = (msg, color = "#34C759") => {
     setNotification({ msg, color });
     setTimeout(() => setNotification(null), 3000);
+  };
+
+  const handleUberPDF = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    setUberLoading(true);
+    setShowUberModal(true);
+    setUberResult(null);
+    const reader = new FileReader();
+    reader.onload = async (ev) => {
+      try {
+        const base64 = ev.target.result.split(",")[1];
+        const res = await fetch("https://api.anthropic.com/v1/messages", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: "claude-sonnet-4-20250514",
+            max_tokens: 1000,
+            messages: [{
+              role: "user",
+              content: [
+                { type: "document", source: { type: "base64", media_type: "application/pdf", data: base64 } },
+                { type: "text", text: `Bu bir Uber haftalık ekstre PDF'i. Sadece JSON formatında yanıt ver, başka hiçbir şey yazma:
+{"earnings": <Kazançlarınız tutarı sayı olarak>, "expenses": <Para İadeleri ve Giderler tutarı sayı olarak>, "total": <Ödemeler tutarı sayı olarak>, "period_start": "<YYYY-MM-DD>", "period_end": "<YYYY-MM-DD>", "trips": <yolculuk sayısı eğer varsa 0>}
+Örnek: {"earnings": 1424.98, "expenses": 93.92, "total": 1518.90, "period_start": "2026-02-23", "period_end": "2026-03-02", "trips": 0}` }
+              ]
+            }]
+          })
+        });
+        const data = await res.json();
+        const text = data.content?.map(i => i.text || "").join("") || "";
+        const clean = text.replace(/```json|```/g, "").trim();
+        const parsed = JSON.parse(clean);
+        setUberResult(parsed);
+      } catch(err) {
+        showNotif("PDF okunamadı, tekrar dene", "#FF453A");
+        setShowUberModal(false);
+      }
+      setUberLoading(false);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const confirmUberImport = (result) => {
+    const newTxs = [];
+    if (result.earnings > 0) {
+      newTxs.push({
+        id: Date.now(),
+        type: "gelir",
+        category: "freelance",
+        amount: result.earnings,
+        desc: `Uber Kazanç (${result.period_start} - ${result.period_end})`,
+        date: result.period_end,
+        receipt: null,
+      });
+    }
+    if (result.expenses > 0) {
+      newTxs.push({
+        id: Date.now() + 1,
+        type: "gider",
+        category: "diger_gider",
+        amount: result.expenses,
+        desc: `Uber Giderler (${result.period_start} - ${result.period_end})`,
+        date: result.period_end,
+        receipt: null,
+      });
+    }
+    setTransactions(prev => [...newTxs, ...prev]);
+    setShowUberModal(false);
+    setUberResult(null);
+    showNotif(`Uber verisi içe aktarıldı! ✓`);
   };
 
   const filteredTx = transactions.filter(t => {
@@ -173,12 +248,28 @@ export default function FinansApp() {
   const handleReceiptUpload = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
+
+    // Güvenli media type belirleme - telefon kamerası için
+    let mediaType = file.type;
+    if (!mediaType || mediaType === "application/octet-stream") {
+      const name = file.name.toLowerCase();
+      if (name.endsWith(".png")) mediaType = "image/png";
+      else if (name.endsWith(".gif")) mediaType = "image/gif";
+      else if (name.endsWith(".webp")) mediaType = "image/webp";
+      else mediaType = "image/jpeg"; // default - telefon fotoğrafları genelde jpeg
+    }
+    // Desteklenmeyen tipler için jpeg'e çevir
+    const supported = ["image/jpeg", "image/png", "image/gif", "image/webp"];
+    if (!supported.includes(mediaType)) mediaType = "image/jpeg";
+
     const reader = new FileReader();
     reader.onload = async (ev) => {
       setReceiptPreview(ev.target.result);
       setOcrLoading(true);
       try {
         const base64 = ev.target.result.split(",")[1];
+        if (!base64) throw new Error("Base64 okunamadı");
+
         const res = await fetch("https://api.anthropic.com/v1/messages", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -188,23 +279,49 @@ export default function FinansApp() {
             messages: [{
               role: "user",
               content: [
-                { type: "image", source: { type: "base64", media_type: file.type, data: base64 } },
-                { type: "text", text: `Bu bir fiş/fatura görseli. Lütfen sadece JSON formatında yanıt ver, başka hiçbir şey yazma:
-{"amount": <toplam tutar sayı olarak>, "desc": "<kısa açıklama>", "category": "<market|yemek|faturalar|ulasim|saglik|eglence|giyim|egitim|kira|diger_gider>", "date": "<YYYY-MM-DD>"}
-Tarih bulunamazsa bugünün tarihini kullan: ${new Date().toISOString().split("T")[0]}` }
+                { type: "image", source: { type: "base64", media_type: mediaType, data: base64 } },
+                { type: "text", text: `Bu bir fiş veya fatura fotoğrafı. Görseldeki bilgilere bakarak sadece JSON formatında yanıt ver, kesinlikle başka hiçbir şey yazma, açıklama yapma:
+{"amount": <toplam tutar CAD olarak sayı>, "desc": "<kısa türkçe açıklama, max 30 karakter>", "category": "<market|yemek|faturalar|ulasim|saglik|eglence|giyim|egitim|kira|diger_gider>", "date": "<YYYY-MM-DD>"}
+Tarih bulunamazsa bugünün tarihini kullan: ${new Date().toISOString().split("T")[0]}
+Tutar bulunamazsa 0 yaz. Sadece JSON, başka hiçbir şey yazma.` }
               ]
             }]
           })
         });
+
+        if (!res.ok) {
+          const errData = await res.json();
+          throw new Error(errData?.error?.message || "API hatası");
+        }
+
         const data = await res.json();
-        const text = data.content?.[0]?.text || "";
+        const text = data.content?.map(i => i.text || "").join("") || "";
         const clean = text.replace(/```json|```/g, "").trim();
-        const parsed = JSON.parse(clean);
-        setForm(f => ({ ...f, type: "gider", amount: String(parsed.amount || ""), desc: parsed.desc || "", category: parsed.category || "diger_gider", date: parsed.date || f.date }));
-        showNotif("Fiş otomatik okundu! ✓");
-      } catch {
-        showNotif("Fiş okunamadı, manuel girin", "#FF9F0A");
+
+        // JSON bul - bazen ekstra metin gelebilir
+        const jsonMatch = clean.match(/\{[\s\S]*\}/);
+        if (!jsonMatch) throw new Error("JSON bulunamadı");
+
+        const parsed = JSON.parse(jsonMatch[0]);
+        if (!parsed.amount && parsed.amount !== 0) throw new Error("Tutar bulunamadı");
+
+        setForm(f => ({
+          ...f,
+          type: "gider",
+          amount: String(parsed.amount || ""),
+          desc: parsed.desc || "",
+          category: parsed.category || "diger_gider",
+          date: parsed.date || f.date
+        }));
+        showNotif("✅ Fiş okundu, kontrol et!");
+      } catch(err) {
+        console.error("Fiş okuma hatası:", err);
+        showNotif("Fiş okunamadı — manuel gir", "#FF9F0A");
       }
+      setOcrLoading(false);
+    };
+    reader.onerror = () => {
+      showNotif("Fotoğraf yüklenemedi", "#FF453A");
       setOcrLoading(false);
     };
     reader.readAsDataURL(file);
@@ -564,6 +681,12 @@ Tarih bulunamazsa bugünün tarihini kullan: ${new Date().toISOString().split("T
 
       {/* FAB Buttons */}
       <div style={{ position: "fixed", bottom: 24, right: 16, display: "flex", flexDirection: "column", gap: 10, zIndex: 100 }}>
+        <input ref={uberFileRef} type="file" accept="application/pdf" onChange={handleUberPDF} style={{ display: "none" }} />
+        <button onClick={() => uberFileRef.current.click()} style={{
+          width: 52, height: 52, borderRadius: "50%", background: "#000", border: "2px solid #fff",
+          color: "#fff", fontSize: 18, cursor: "pointer", boxShadow: "0 4px 20px rgba(255,255,255,0.2)",
+          display: "flex", alignItems: "center", justifyContent: "center",
+        }}>🚗</button>
         <button onClick={() => { setForm(f => ({...f, type: "gelir", category: "maas"})); setShowModal(true); }} style={{
           width: 52, height: 52, borderRadius: "50%", background: "#34C759", border: "none",
           color: "#fff", fontSize: 22, cursor: "pointer", boxShadow: "0 4px 20px rgba(52,199,89,0.4)",
@@ -684,8 +807,58 @@ Tarih bulunamazsa bugünün tarihini kullan: ${new Date().toISOString().split("T
         </div>
       )}
 
+      {/* Uber PDF Modal */}
+      {showUberModal && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)", zIndex: 2000, display: "flex", alignItems: "center", justifyContent: "center", padding: 24, backdropFilter: "blur(10px)" }}>
+          <div style={{ background: "#1C1C1E", borderRadius: 24, padding: 28, width: "100%", border: "1px solid #3A3A3C" }}>
+            {uberLoading ? (
+              <div style={{ textAlign: "center", padding: 20 }}>
+                <div style={{ fontSize: 48, marginBottom: 16 }}>🚗</div>
+                <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 8 }}>PDF Okunuyor...</div>
+                <div style={{ color: "#8E8E93", fontSize: 14 }}>AI Uber ekstrenizi analiz ediyor</div>
+                <div style={{ marginTop: 20, display: "flex", justifyContent: "center", gap: 6 }}>
+                  {[0,1,2].map(i => (
+                    <div key={i} style={{ width: 8, height: 8, borderRadius: "50%", background: "#0A84FF", animation: `pulse ${0.6 + i * 0.2}s infinite alternate` }} />
+                  ))}
+                </div>
+              </div>
+            ) : uberResult ? (
+              <div>
+                <div style={{ fontSize: 20, fontWeight: 800, marginBottom: 4 }}>🚗 Uber Ekstre Özeti</div>
+                <div style={{ fontSize: 13, color: "#8E8E93", marginBottom: 20 }}>{uberResult.period_start} → {uberResult.period_end}</div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 24 }}>
+                  <div style={{ background: "#34C75915", border: "1px solid #34C75930", borderRadius: 14, padding: 16, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <div>
+                      <div style={{ fontSize: 12, color: "#8E8E93" }}>💚 NET KAZANÇ</div>
+                      <div style={{ fontSize: 11, color: "#8E8E93", marginTop: 2 }}>Gelir olarak eklenecek</div>
+                    </div>
+                    <div style={{ fontSize: 22, fontWeight: 800, color: "#34C759" }}>CA${uberResult.earnings?.toFixed(2)}</div>
+                  </div>
+                  <div style={{ background: "#FF453A15", border: "1px solid #FF453A30", borderRadius: 14, padding: 16, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <div>
+                      <div style={{ fontSize: 12, color: "#8E8E93" }}>🔴 GİDERLER</div>
+                      <div style={{ fontSize: 11, color: "#8E8E93", marginTop: 2 }}>Gider olarak eklenecek</div>
+                    </div>
+                    <div style={{ fontSize: 22, fontWeight: 800, color: "#FF453A" }}>CA${uberResult.expenses?.toFixed(2)}</div>
+                  </div>
+                  <div style={{ background: "#0A84FF15", border: "1px solid #0A84FF30", borderRadius: 14, padding: 16, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <div style={{ fontSize: 12, color: "#8E8E93" }}>💳 TOPLAM ÖDEME</div>
+                    <div style={{ fontSize: 22, fontWeight: 800, color: "#0A84FF" }}>CA${uberResult.total?.toFixed(2)}</div>
+                  </div>
+                </div>
+                <div style={{ display: "flex", gap: 12 }}>
+                  <button onClick={() => { setShowUberModal(false); setUberResult(null); }} style={{ flex: 1, background: "#2C2C2E", border: "none", color: "#fff", borderRadius: 12, padding: 14, cursor: "pointer", fontWeight: 600 }}>İptal</button>
+                  <button onClick={() => confirmUberImport(uberResult)} style={{ flex: 2, background: "#34C759", border: "none", color: "#fff", borderRadius: 12, padding: 14, cursor: "pointer", fontWeight: 700, fontSize: 15 }}>✅ İçe Aktar</button>
+                </div>
+              </div>
+            ) : null}
+          </div>
+        </div>
+      )}
+
       <style>{`
         @keyframes fadeIn { from { opacity: 0; transform: translateX(-50%) translateY(-10px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }
+        @keyframes pulse { from { opacity: 0.3; transform: scale(0.8); } to { opacity: 1; transform: scale(1.2); } }
         * { -webkit-tap-highlight-color: transparent; }
         input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(1); }
       `}</style>
