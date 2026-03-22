@@ -1,0 +1,685 @@
+import { useState, useRef, useEffect } from "react";
+import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, LineChart, Line, CartesianGrid } from "recharts";
+
+const CATEGORIES = {
+  gelir: [
+    { id: "maas", label: "Maaş", icon: "💼", color: "#34C759" },
+    { id: "freelance", label: "Freelance", icon: "💻", color: "#30D158" },
+    { id: "kira_geliri", label: "Kira Geliri", icon: "🏠", color: "#32D74B" },
+    { id: "yatirim", label: "Yatırım", icon: "📈", color: "#4CD964" },
+    { id: "diger_gelir", label: "Diğer Gelir", icon: "💰", color: "#28CD41" },
+  ],
+  gider: [
+    { id: "market", label: "Market", icon: "🛒", color: "#FF453A" },
+    { id: "faturalar", label: "Faturalar", icon: "⚡", color: "#FF6B35" },
+    { id: "ulasim", label: "Ulaşım", icon: "🚗", color: "#FF9F0A" },
+    { id: "saglik", label: "Sağlık", icon: "💊", color: "#FF375F" },
+    { id: "eglence", label: "Eğlence", icon: "🎬", color: "#BF5AF2" },
+    { id: "giyim", label: "Giyim", icon: "👗", color: "#FF6B6B" },
+    { id: "yemek", label: "Yemek/Restoran", icon: "🍽️", color: "#FF8C42" },
+    { id: "egitim", label: "Eğitim", icon: "📚", color: "#0A84FF" },
+    { id: "kira", label: "Kira", icon: "🏡", color: "#5E5CE6" },
+    { id: "diger_gider", label: "Diğer Gider", icon: "📦", color: "#98989D" },
+  ],
+};
+
+const MONTHS = ["Oca","Şub","Mar","Nis","May","Haz","Tem","Ağu","Eyl","Eki","Kas","Ara"];
+
+const sampleData = [
+  { id: 1, type: "gelir", category: "maas", amount: 5200, desc: "January Salary", date: "2026-01-05", receipt: null },
+  { id: 2, type: "gider", category: "kira", amount: 1800, desc: "Rent", date: "2026-01-01", receipt: null },
+  { id: 3, type: "gider", category: "market", amount: 320, desc: "Grocery Shopping", date: "2026-01-08", receipt: null },
+  { id: 4, type: "gider", category: "faturalar", amount: 180, desc: "Hydro & Internet", date: "2026-01-10", receipt: null },
+  { id: 5, type: "gider", category: "yemek", amount: 210, desc: "Restaurants", date: "2026-01-14", receipt: null },
+  { id: 6, type: "gelir", category: "freelance", amount: 950, desc: "Project Payment", date: "2026-01-18", receipt: null },
+  { id: 7, type: "gider", category: "eglence", amount: 45, desc: "Netflix, Spotify", date: "2026-01-20", receipt: null },
+  { id: 8, type: "gider", category: "ulasim", amount: 160, desc: "Gas & Transit", date: "2026-01-22", receipt: null },
+  { id: 9, type: "gider", category: "saglik", amount: 90, desc: "Pharmacy", date: "2026-02-03", receipt: null },
+  { id: 10, type: "gelir", category: "maas", amount: 5200, desc: "February Salary", date: "2026-02-05", receipt: null },
+  { id: 11, type: "gider", category: "kira", amount: 1800, desc: "Rent", date: "2026-02-01", receipt: null },
+  { id: 12, type: "gider", category: "market", amount: 290, desc: "Grocery Shopping", date: "2026-02-10", receipt: null },
+  { id: 13, type: "gelir", category: "maas", amount: 5200, desc: "March Salary", date: "2026-03-05", receipt: null },
+  { id: 14, type: "gider", category: "kira", amount: 1800, desc: "Rent", date: "2026-03-01", receipt: null },
+  { id: 15, type: "gider", category: "giyim", amount: 185, desc: "Spring Shopping", date: "2026-03-15", receipt: null },
+];
+
+function formatMoney(n) {
+  return new Intl.NumberFormat("en-CA", { style: "currency", currency: "CAD", maximumFractionDigits: 0 }).format(n);
+}
+
+function getCategoryInfo(type, id) {
+  return CATEGORIES[type]?.find(c => c.id === id) || { label: id, icon: "📌", color: "#888" };
+}
+
+function generateAISuggestions(transactions) {
+  const suggestions = [];
+  const now = new Date();
+  const thisMonth = transactions.filter(t => {
+    const d = new Date(t.date);
+    return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+  });
+
+  const totalGelir = thisMonth.filter(t => t.type === "gelir").reduce((s, t) => s + t.amount, 0);
+  const totalGider = thisMonth.filter(t => t.type === "gider").reduce((s, t) => s + t.amount, 0);
+  const balance = totalGelir - totalGider;
+
+  const giderByCategory = {};
+  thisMonth.filter(t => t.type === "gider").forEach(t => {
+    giderByCategory[t.category] = (giderByCategory[t.category] || 0) + t.amount;
+  });
+
+  if (totalGider > totalGelir * 0.8) suggestions.push({ type: "warning", icon: "⚠️", text: "Bu ay giderleriniz gelirinizin %80'ini aştı. Tasarruf planı oluşturmanızı öneririz." });
+  if (giderByCategory["yemek"] > totalGelir * 0.15) suggestions.push({ type: "tip", icon: "🍽️", text: `Yemek harcamalarınız (${formatMoney(giderByCategory["yemek"])}) oldukça yüksek. Evde yemek yaparak %40 tasarruf edebilirsiniz.` });
+  if (giderByCategory["eglence"] > 500) suggestions.push({ type: "tip", icon: "🎬", text: "Eğlence harcamalarınızı gözden geçirin. Ücretsiz alternatifler deneyebilirsiniz." });
+  if (balance > 0) suggestions.push({ type: "positive", icon: "🎯", text: `Aylık ${formatMoney(balance)} bütçe fazlanızı yatırıma yönlendirmeyi düşünün.` });
+  if (balance > 3000) suggestions.push({ type: "positive", icon: "📈", text: "Acil durum fonu için gelirinizin %10'unu biriktime ayırmanızı öneririz." });
+  if (!giderByCategory["saglik"]) suggestions.push({ type: "info", icon: "💊", text: "Bu ay sağlık harcaması görünmüyor. Düzenli check-up ihmal etmeyin." });
+
+  return suggestions;
+}
+
+export default function FinansApp() {
+  const [tab, setTab] = useState("dashboard");
+  const [transactions, setTransactions] = useState(sampleData);
+  const [showModal, setShowModal] = useState(false);
+  const [modalType, setModalType] = useState("gider");
+  const [form, setForm] = useState({ type: "gider", category: "market", amount: "", desc: "", date: new Date().toISOString().split("T")[0], receipt: null });
+  const [receiptPreview, setReceiptPreview] = useState(null);
+  const [filterMonth, setFilterMonth] = useState(new Date().getMonth());
+  const [filterYear, setFilterYear] = useState(new Date().getFullYear());
+  const [deleteId, setDeleteId] = useState(null);
+  const [ocrLoading, setOcrLoading] = useState(false);
+  const [notification, setNotification] = useState(null);
+  const fileRef = useRef();
+
+  const showNotif = (msg, color = "#34C759") => {
+    setNotification({ msg, color });
+    setTimeout(() => setNotification(null), 3000);
+  };
+
+  const filteredTx = transactions.filter(t => {
+    const d = new Date(t.date);
+    return d.getMonth() === filterMonth && d.getFullYear() === filterYear;
+  });
+
+  const totalGelir = filteredTx.filter(t => t.type === "gelir").reduce((s, t) => s + t.amount, 0);
+  const totalGider = filteredTx.filter(t => t.type === "gider").reduce((s, t) => s + t.amount, 0);
+  const balance = totalGelir - totalGider;
+
+  const giderByCategory = {};
+  filteredTx.filter(t => t.type === "gider").forEach(t => {
+    const cat = getCategoryInfo("gider", t.category);
+    giderByCategory[t.category] = {
+      name: cat.label,
+      value: (giderByCategory[t.category]?.value || 0) + t.amount,
+      color: cat.color,
+      icon: cat.icon,
+    };
+  });
+
+  const gelirByCategory = {};
+  filteredTx.filter(t => t.type === "gelir").forEach(t => {
+    const cat = getCategoryInfo("gelir", t.category);
+    gelirByCategory[t.category] = {
+      name: cat.label,
+      value: (gelirByCategory[t.category]?.value || 0) + t.amount,
+      color: cat.color,
+      icon: cat.icon,
+    };
+  });
+
+  const monthlyData = Array.from({ length: 6 }, (_, i) => {
+    const d = new Date();
+    d.setMonth(d.getMonth() - (5 - i));
+    const m = d.getMonth(), y = d.getFullYear();
+    const txs = transactions.filter(t => {
+      const td = new Date(t.date);
+      return td.getMonth() === m && td.getFullYear() === y;
+    });
+    return {
+      name: MONTHS[m],
+      Gelir: txs.filter(t => t.type === "gelir").reduce((s, t) => s + t.amount, 0),
+      Gider: txs.filter(t => t.type === "gider").reduce((s, t) => s + t.amount, 0),
+    };
+  });
+
+  const suggestions = generateAISuggestions(transactions);
+
+  const handleAdd = () => {
+    if (!form.amount || isNaN(Number(form.amount))) { showNotif("Geçerli bir tutar girin!", "#FF453A"); return; }
+    const newTx = { ...form, id: Date.now(), amount: Number(form.amount) };
+    setTransactions(prev => [newTx, ...prev]);
+    setShowModal(false);
+    setReceiptPreview(null);
+    setForm({ type: "gider", category: "market", amount: "", desc: "", date: new Date().toISOString().split("T")[0], receipt: null });
+    showNotif(`${form.type === "gelir" ? "Gelir" : "Gider"} eklendi ✓`);
+  };
+
+  const handleDelete = (id) => {
+    setTransactions(prev => prev.filter(t => t.id !== id));
+    setDeleteId(null);
+    showNotif("Silindi", "#FF453A");
+  };
+
+  const handleReceiptUpload = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = async (ev) => {
+      setReceiptPreview(ev.target.result);
+      setOcrLoading(true);
+      try {
+        const base64 = ev.target.result.split(",")[1];
+        const res = await fetch("https://api.anthropic.com/v1/messages", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: "claude-sonnet-4-20250514",
+            max_tokens: 500,
+            messages: [{
+              role: "user",
+              content: [
+                { type: "image", source: { type: "base64", media_type: file.type, data: base64 } },
+                { type: "text", text: `Bu bir fiş/fatura görseli. Lütfen sadece JSON formatında yanıt ver, başka hiçbir şey yazma:
+{"amount": <toplam tutar sayı olarak>, "desc": "<kısa açıklama>", "category": "<market|yemek|faturalar|ulasim|saglik|eglence|giyim|egitim|kira|diger_gider>", "date": "<YYYY-MM-DD>"}
+Tarih bulunamazsa bugünün tarihini kullan: ${new Date().toISOString().split("T")[0]}` }
+              ]
+            }]
+          })
+        });
+        const data = await res.json();
+        const text = data.content?.[0]?.text || "";
+        const clean = text.replace(/```json|```/g, "").trim();
+        const parsed = JSON.parse(clean);
+        setForm(f => ({ ...f, type: "gider", amount: String(parsed.amount || ""), desc: parsed.desc || "", category: parsed.category || "diger_gider", date: parsed.date || f.date }));
+        showNotif("Fiş otomatik okundu! ✓");
+      } catch {
+        showNotif("Fiş okunamadı, manuel girin", "#FF9F0A");
+      }
+      setOcrLoading(false);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const pieGiderData = Object.values(giderByCategory);
+  const pieGelirData = Object.values(gelirByCategory);
+
+  return (
+    <div style={{
+      minHeight: "100vh",
+      background: "#000",
+      color: "#fff",
+      fontFamily: "'SF Pro Display', -apple-system, BlinkMacSystemFont, sans-serif",
+      maxWidth: 430,
+      margin: "0 auto",
+      position: "relative",
+      overflow: "hidden",
+    }}>
+      {/* Notification */}
+      {notification && (
+        <div style={{
+          position: "fixed", top: 60, left: "50%", transform: "translateX(-50%)",
+          background: notification.color, color: "#fff", padding: "10px 24px",
+          borderRadius: 20, fontSize: 14, fontWeight: 600, zIndex: 9999,
+          boxShadow: "0 4px 20px rgba(0,0,0,0.4)", animation: "fadeIn .3s",
+        }}>{notification.msg}</div>
+      )}
+
+      {/* Header */}
+      <div style={{ padding: "56px 20px 0", background: "linear-gradient(180deg, #1C1C1E 0%, #000 100%)" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+          <div>
+            <div style={{ fontSize: 13, color: "#8E8E93", marginBottom: 2 }}>Hoş geldin 👋</div>
+            <div style={{ fontSize: 22, fontWeight: 700 }}>Bütçem</div>
+          </div>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <select value={filterMonth} onChange={e => setFilterMonth(Number(e.target.value))}
+              style={{ background: "#2C2C2E", color: "#fff", border: "none", borderRadius: 10, padding: "6px 10px", fontSize: 13 }}>
+              {MONTHS.map((m, i) => <option key={i} value={i}>{m}</option>)}
+            </select>
+            <select value={filterYear} onChange={e => setFilterYear(Number(e.target.value))}
+              style={{ background: "#2C2C2E", color: "#fff", border: "none", borderRadius: 10, padding: "6px 10px", fontSize: 13 }}>
+              {[2024, 2025, 2026].map(y => <option key={y} value={y}>{y}</option>)}
+            </select>
+          </div>
+        </div>
+
+        {/* Balance Card */}
+        <div style={{
+          background: "linear-gradient(135deg, #1C1C2E 0%, #16213E 50%, #0F3460 100%)",
+          borderRadius: 24, padding: "24px 20px", marginBottom: 16,
+          border: "1px solid rgba(255,255,255,0.08)",
+          boxShadow: "0 8px 32px rgba(0,122,255,0.15)",
+        }}>
+          <div style={{ fontSize: 13, color: "#8E8E93", marginBottom: 6 }}>Aylık Net Bakiye</div>
+          <div style={{
+            fontSize: 40, fontWeight: 800, letterSpacing: -1,
+            color: balance >= 0 ? "#34C759" : "#FF453A",
+          }}>{formatMoney(balance)}</div>
+          <div style={{ display: "flex", gap: 20, marginTop: 20 }}>
+            <div>
+              <div style={{ fontSize: 11, color: "#8E8E93" }}>↑ GELİR</div>
+              <div style={{ fontSize: 18, fontWeight: 700, color: "#34C759" }}>{formatMoney(totalGelir)}</div>
+            </div>
+            <div style={{ width: 1, background: "rgba(255,255,255,0.1)" }} />
+            <div>
+              <div style={{ fontSize: 11, color: "#8E8E93" }}>↓ GİDER</div>
+              <div style={{ fontSize: 18, fontWeight: 700, color: "#FF453A" }}>{formatMoney(totalGider)}</div>
+            </div>
+            <div style={{ marginLeft: "auto" }}>
+              <div style={{ fontSize: 11, color: "#8E8E93" }}>İŞLEM</div>
+              <div style={{ fontSize: 18, fontWeight: 700 }}>{filteredTx.length}</div>
+            </div>
+          </div>
+          {totalGelir > 0 && (
+            <div style={{ marginTop: 16 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "#8E8E93", marginBottom: 4 }}>
+                <span>Harcama Oranı</span>
+                <span>{Math.round((totalGider / totalGelir) * 100)}%</span>
+              </div>
+              <div style={{ background: "rgba(255,255,255,0.1)", borderRadius: 4, height: 6 }}>
+                <div style={{
+                  width: `${Math.min((totalGider / totalGelir) * 100, 100)}%`,
+                  background: totalGider / totalGelir > 0.8 ? "#FF453A" : "#34C759",
+                  height: "100%", borderRadius: 4, transition: "width .5s"
+                }} />
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Tab Bar */}
+      <div style={{ display: "flex", background: "#1C1C1E", padding: "0 16px", borderBottom: "1px solid #2C2C2E" }}>
+        {[
+          { id: "dashboard", icon: "📊", label: "Özet" },
+          { id: "transactions", icon: "📋", label: "İşlemler" },
+          { id: "charts", icon: "📈", label: "Grafikler" },
+          { id: "suggestions", icon: "🤖", label: "Öneriler" },
+        ].map(t => (
+          <button key={t.id} onClick={() => setTab(t.id)} style={{
+            flex: 1, background: "none", border: "none", color: tab === t.id ? "#0A84FF" : "#8E8E93",
+            padding: "12px 0", fontSize: 11, cursor: "pointer", fontWeight: tab === t.id ? 700 : 400,
+            borderBottom: tab === t.id ? "2px solid #0A84FF" : "2px solid transparent",
+            display: "flex", flexDirection: "column", alignItems: "center", gap: 2,
+          }}>
+            <span style={{ fontSize: 18 }}>{t.icon}</span>
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Content */}
+      <div style={{ padding: "16px 16px 100px", overflowY: "auto", maxHeight: "calc(100vh - 280px)" }}>
+
+        {/* DASHBOARD TAB */}
+        {tab === "dashboard" && (
+          <div>
+            {/* Quick Stats */}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>
+              {[
+                { label: "En Büyük Gider", value: Object.values(giderByCategory).sort((a,b)=>b.value-a.value)[0], type: "gider" },
+                { label: "En Büyük Gelir", value: Object.values(gelirByCategory).sort((a,b)=>b.value-a.value)[0], type: "gelir" },
+              ].map((s, i) => s.value ? (
+                <div key={i} style={{ background: "#1C1C1E", borderRadius: 16, padding: 16 }}>
+                  <div style={{ fontSize: 11, color: "#8E8E93", marginBottom: 8 }}>{s.label}</div>
+                  <div style={{ fontSize: 22, marginBottom: 4 }}>{s.value.icon}</div>
+                  <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 2 }}>{s.value.name}</div>
+                  <div style={{ fontSize: 16, fontWeight: 700, color: s.type === "gider" ? "#FF453A" : "#34C759" }}>
+                    {formatMoney(s.value.value)}
+                  </div>
+                </div>
+              ) : null)}
+            </div>
+
+            {/* Recent Transactions */}
+            <div style={{ fontSize: 17, fontWeight: 700, marginBottom: 12 }}>Son İşlemler</div>
+            {filteredTx.slice(0, 5).map(tx => {
+              const cat = getCategoryInfo(tx.type, tx.category);
+              return (
+                <div key={tx.id} style={{
+                  background: "#1C1C1E", borderRadius: 14, padding: "12px 14px",
+                  marginBottom: 8, display: "flex", alignItems: "center", gap: 12,
+                }}>
+                  <div style={{
+                    width: 42, height: 42, borderRadius: 12,
+                    background: cat.color + "25", display: "flex", alignItems: "center", justifyContent: "center",
+                    fontSize: 20, flexShrink: 0,
+                  }}>{cat.icon}</div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 14, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {tx.desc || cat.label}
+                    </div>
+                    <div style={{ fontSize: 12, color: "#8E8E93" }}>{tx.date} · {cat.label}</div>
+                  </div>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: tx.type === "gelir" ? "#34C759" : "#FF453A", flexShrink: 0 }}>
+                    {tx.type === "gelir" ? "+" : "-"}{formatMoney(tx.amount)}
+                  </div>
+                </div>
+              );
+            })}
+
+            {/* AI Tip */}
+            {suggestions[0] && (
+              <div style={{ background: "linear-gradient(135deg, #1C2D4A, #0A84FF20)", borderRadius: 16, padding: 16, marginTop: 8, border: "1px solid #0A84FF30" }}>
+                <div style={{ fontSize: 12, color: "#0A84FF", fontWeight: 700, marginBottom: 6 }}>🤖 AI ÖNERİSİ</div>
+                <div style={{ fontSize: 14, lineHeight: 1.5, color: "#E5E5EA" }}>{suggestions[0].text}</div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* TRANSACTIONS TAB */}
+        {tab === "transactions" && (
+          <div>
+            <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+              {["tümü", "gelir", "gider"].map(f => (
+                <button key={f} style={{
+                  background: "#2C2C2E", border: "none", color: "#fff", borderRadius: 20,
+                  padding: "6px 14px", fontSize: 13, cursor: "pointer", textTransform: "capitalize"
+                }}>{f === "tümü" ? "Tümü" : f === "gelir" ? "Gelirler" : "Giderler"} ({
+                  f === "tümü" ? filteredTx.length : filteredTx.filter(t => t.type === f).length
+                })</button>
+              ))}
+            </div>
+            {filteredTx.length === 0 && (
+              <div style={{ textAlign: "center", padding: 40, color: "#8E8E93" }}>
+                <div style={{ fontSize: 40, marginBottom: 12 }}>📭</div>
+                <div>Bu ay henüz işlem yok</div>
+              </div>
+            )}
+            {filteredTx.map(tx => {
+              const cat = getCategoryInfo(tx.type, tx.category);
+              return (
+                <div key={tx.id} style={{
+                  background: "#1C1C1E", borderRadius: 14, padding: "14px",
+                  marginBottom: 8, display: "flex", alignItems: "center", gap: 12,
+                }}>
+                  <div style={{
+                    width: 46, height: 46, borderRadius: 14,
+                    background: cat.color + "22", display: "flex", alignItems: "center", justifyContent: "center",
+                    fontSize: 22, flexShrink: 0, border: `1px solid ${cat.color}40`,
+                  }}>{cat.icon}</div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 15, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {tx.desc || cat.label}
+                    </div>
+                    <div style={{ fontSize: 12, color: "#8E8E93", marginTop: 2 }}>{tx.date} · {cat.label}</div>
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6 }}>
+                    <div style={{ fontSize: 16, fontWeight: 700, color: tx.type === "gelir" ? "#34C759" : "#FF453A" }}>
+                      {tx.type === "gelir" ? "+" : "-"}{formatMoney(tx.amount)}
+                    </div>
+                    <button onClick={() => setDeleteId(tx.id)} style={{
+                      background: "#FF453A20", border: "none", color: "#FF453A",
+                      borderRadius: 8, padding: "3px 10px", fontSize: 11, cursor: "pointer"
+                    }}>Sil</button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* CHARTS TAB */}
+        {tab === "charts" && (
+          <div>
+            <div style={{ fontSize: 17, fontWeight: 700, marginBottom: 16 }}>6 Aylık Trend</div>
+            <div style={{ background: "#1C1C1E", borderRadius: 20, padding: 16, marginBottom: 16 }}>
+              <ResponsiveContainer width="100%" height={200}>
+                <BarChart data={monthlyData} barGap={4}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#2C2C2E" />
+                  <XAxis dataKey="name" tick={{ fill: "#8E8E93", fontSize: 11 }} axisLine={false} tickLine={false} />
+                  <YAxis tick={{ fill: "#8E8E93", fontSize: 10 }} axisLine={false} tickLine={false} tickFormatter={v => v >= 1000 ? `${v/1000}k` : v} />
+                  <Tooltip formatter={(v) => formatMoney(v)} contentStyle={{ background: "#2C2C2E", border: "none", borderRadius: 12, color: "#fff" }} />
+                  <Bar dataKey="Gelir" fill="#34C759" radius={[4,4,0,0]} />
+                  <Bar dataKey="Gider" fill="#FF453A" radius={[4,4,0,0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+
+            {pieGiderData.length > 0 && (
+              <>
+                <div style={{ fontSize: 17, fontWeight: 700, marginBottom: 16 }}>Gider Dağılımı</div>
+                <div style={{ background: "#1C1C1E", borderRadius: 20, padding: 16, marginBottom: 16 }}>
+                  <div style={{ display: "flex", alignItems: "center" }}>
+                    <ResponsiveContainer width="55%" height={180}>
+                      <PieChart>
+                        <Pie data={pieGiderData} cx="50%" cy="50%" innerRadius={45} outerRadius={75} dataKey="value" paddingAngle={3}>
+                          {pieGiderData.map((d, i) => <Cell key={i} fill={d.color} />)}
+                        </Pie>
+                        <Tooltip formatter={(v) => formatMoney(v)} contentStyle={{ background: "#2C2C2E", border: "none", borderRadius: 12, color: "#fff" }} />
+                      </PieChart>
+                    </ResponsiveContainer>
+                    <div style={{ flex: 1, paddingLeft: 8 }}>
+                      {pieGiderData.sort((a,b)=>b.value-a.value).slice(0,5).map((d,i) => (
+                        <div key={i} style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
+                          <div style={{ width: 8, height: 8, borderRadius: "50%", background: d.color, flexShrink: 0 }} />
+                          <div style={{ fontSize: 11, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{d.icon} {d.name}</div>
+                          <div style={{ fontSize: 11, color: "#FF453A", fontWeight: 600, flexShrink: 0 }}>{Math.round((d.value/totalGider)*100)}%</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </>
+            )}
+
+            {pieGelirData.length > 0 && (
+              <>
+                <div style={{ fontSize: 17, fontWeight: 700, marginBottom: 16 }}>Gelir Dağılımı</div>
+                <div style={{ background: "#1C1C1E", borderRadius: 20, padding: 16, marginBottom: 16 }}>
+                  <div style={{ display: "flex", alignItems: "center" }}>
+                    <ResponsiveContainer width="55%" height={150}>
+                      <PieChart>
+                        <Pie data={pieGelirData} cx="50%" cy="50%" innerRadius={35} outerRadius={60} dataKey="value" paddingAngle={3}>
+                          {pieGelirData.map((d, i) => <Cell key={i} fill={d.color} />)}
+                        </Pie>
+                        <Tooltip formatter={(v) => formatMoney(v)} contentStyle={{ background: "#2C2C2E", border: "none", borderRadius: 12, color: "#fff" }} />
+                      </PieChart>
+                    </ResponsiveContainer>
+                    <div style={{ flex: 1 }}>
+                      {pieGelirData.map((d,i) => (
+                        <div key={i} style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
+                          <div style={{ width: 8, height: 8, borderRadius: "50%", background: d.color, flexShrink: 0 }} />
+                          <div style={{ fontSize: 12, flex: 1 }}>{d.icon} {d.name}</div>
+                          <div style={{ fontSize: 12, color: "#34C759", fontWeight: 600 }}>{formatMoney(d.value)}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
+        {/* SUGGESTIONS TAB */}
+        {tab === "suggestions" && (
+          <div>
+            <div style={{ background: "linear-gradient(135deg, #1C2D4A, #0A1628)", borderRadius: 20, padding: 20, marginBottom: 16, border: "1px solid #0A84FF30" }}>
+              <div style={{ fontSize: 13, color: "#0A84FF", fontWeight: 700, marginBottom: 4 }}>🤖 AI FİNANS DANIŞMANI</div>
+              <div style={{ fontSize: 22, fontWeight: 800, marginBottom: 8 }}>Bütçe Analizi</div>
+              <div style={{ fontSize: 14, color: "#8E8E93", lineHeight: 1.6 }}>
+                {MONTHS[filterMonth]} {filterYear} dönemi için {filteredTx.length} işlem analiz edildi.
+                {balance >= 0
+                  ? ` Harika! ${formatMoney(balance)} fazla verdiniz.`
+                  : ` Dikkat: ${formatMoney(Math.abs(balance))} açığınız var.`}
+              </div>
+            </div>
+
+            {suggestions.length === 0 && (
+              <div style={{ textAlign: "center", padding: 40, color: "#8E8E93" }}>
+                <div style={{ fontSize: 40, marginBottom: 12 }}>✅</div>
+                <div>Tebrikler! Bütçeniz dengeli görünüyor.</div>
+              </div>
+            )}
+
+            {suggestions.map((s, i) => (
+              <div key={i} style={{
+                background: s.type === "warning" ? "#FF453A15" : s.type === "positive" ? "#34C75915" : "#0A84FF10",
+                border: `1px solid ${s.type === "warning" ? "#FF453A30" : s.type === "positive" ? "#34C75930" : "#0A84FF30"}`,
+                borderRadius: 16, padding: 16, marginBottom: 12,
+              }}>
+                <div style={{ fontSize: 24, marginBottom: 8 }}>{s.icon}</div>
+                <div style={{ fontSize: 14, lineHeight: 1.6, color: "#E5E5EA" }}>{s.text}</div>
+              </div>
+            ))}
+
+            {/* Budget Goals */}
+            <div style={{ fontSize: 17, fontWeight: 700, marginBottom: 12, marginTop: 8 }}>💡 Bütçe Hedefleri</div>
+            {[
+              { label: "Tasarruf Hedefi (%20)", target: totalGelir * 0.2, current: balance },
+              { label: "Gıda Limiti (%15)", target: totalGelir * 0.15, current: (giderByCategory["market"]?.value || 0) + (giderByCategory["yemek"]?.value || 0) },
+              { label: "Eğlence Limiti (%5)", target: totalGelir * 0.05, current: giderByCategory["eglence"]?.value || 0 },
+            ].map((g, i) => {
+              const pct = totalGelir > 0 ? Math.min((g.current / g.target) * 100, 100) : 0;
+              const over = g.current > g.target;
+              return (
+                <div key={i} style={{ background: "#1C1C1E", borderRadius: 14, padding: 14, marginBottom: 8 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
+                    <div style={{ fontSize: 13, fontWeight: 600 }}>{g.label}</div>
+                    <div style={{ fontSize: 12, color: over ? "#FF453A" : "#34C759" }}>
+                      {formatMoney(g.current)} / {formatMoney(g.target)}
+                    </div>
+                  </div>
+                  <div style={{ background: "#2C2C2E", borderRadius: 4, height: 8 }}>
+                    <div style={{ width: `${pct}%`, background: over ? "#FF453A" : "#34C759", height: "100%", borderRadius: 4, transition: "width .5s" }} />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* FAB Buttons */}
+      <div style={{ position: "fixed", bottom: 24, right: 16, display: "flex", flexDirection: "column", gap: 10, zIndex: 100 }}>
+        <button onClick={() => { setForm(f => ({...f, type: "gelir", category: "maas"})); setShowModal(true); }} style={{
+          width: 52, height: 52, borderRadius: "50%", background: "#34C759", border: "none",
+          color: "#fff", fontSize: 22, cursor: "pointer", boxShadow: "0 4px 20px rgba(52,199,89,0.4)",
+          display: "flex", alignItems: "center", justifyContent: "center",
+        }}>+</button>
+        <button onClick={() => { setForm(f => ({...f, type: "gider", category: "market"})); setShowModal(true); }} style={{
+          width: 52, height: 52, borderRadius: "50%", background: "#FF453A", border: "none",
+          color: "#fff", fontSize: 22, cursor: "pointer", boxShadow: "0 4px 20px rgba(255,69,58,0.4)",
+          display: "flex", alignItems: "center", justifyContent: "center",
+        }}>−</button>
+      </div>
+
+      {/* Add Modal */}
+      {showModal && (
+        <div style={{
+          position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 1000,
+          display: "flex", alignItems: "flex-end", backdropFilter: "blur(10px)",
+        }} onClick={e => e.target === e.currentTarget && setShowModal(false)}>
+          <div style={{
+            background: "#1C1C1E", borderRadius: "24px 24px 0 0", padding: "20px 20px 40px",
+            width: "100%", maxHeight: "90vh", overflowY: "auto",
+          }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+              <div style={{ fontSize: 20, fontWeight: 700 }}>
+                {form.type === "gelir" ? "💚 Gelir Ekle" : "🔴 Gider Ekle"}
+              </div>
+              <button onClick={() => setShowModal(false)} style={{ background: "#2C2C2E", border: "none", color: "#fff", borderRadius: "50%", width: 32, height: 32, cursor: "pointer", fontSize: 16 }}>✕</button>
+            </div>
+
+            {/* Type Toggle */}
+            <div style={{ display: "flex", background: "#2C2C2E", borderRadius: 12, padding: 4, marginBottom: 16 }}>
+              {["gelir","gider"].map(t => (
+                <button key={t} onClick={() => setForm(f => ({...f, type: t, category: t === "gelir" ? "maas" : "market"}))} style={{
+                  flex: 1, padding: "8px", border: "none", borderRadius: 10, cursor: "pointer",
+                  background: form.type === t ? (t === "gelir" ? "#34C759" : "#FF453A") : "transparent",
+                  color: "#fff", fontWeight: 700, fontSize: 14,
+                }}>{t === "gelir" ? "💚 Gelir" : "🔴 Gider"}</button>
+              ))}
+            </div>
+
+            {/* Receipt Upload */}
+            <div style={{ marginBottom: 16 }}>
+              <div style={{ fontSize: 13, color: "#8E8E93", marginBottom: 8 }}>📷 Fiş Yükle (AI ile Otomatik Oku)</div>
+              <input ref={fileRef} type="file" accept="image/*" onChange={handleReceiptUpload} style={{ display: "none" }} />
+              <button onClick={() => fileRef.current.click()} style={{
+                width: "100%", background: "#2C2C2E", border: "2px dashed #3A3A3C", borderRadius: 14,
+                color: "#0A84FF", padding: 16, cursor: "pointer", fontSize: 14, fontWeight: 600,
+              }}>
+                {ocrLoading ? "⏳ Fiş Okunuyor..." : "📸 Fiş Fotoğrafı Çek veya Seç"}
+              </button>
+              {receiptPreview && <img src={receiptPreview} alt="fiş" style={{ width: "100%", borderRadius: 12, marginTop: 8, maxHeight: 150, objectFit: "cover" }} />}
+            </div>
+
+            {/* Amount */}
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 13, color: "#8E8E93", marginBottom: 6 }}>Tutar (₺)</div>
+              <input value={form.amount} onChange={e => setForm(f => ({...f, amount: e.target.value}))}
+                type="number" placeholder="0"
+                style={{ width: "100%", background: "#2C2C2E", border: "none", borderRadius: 12, padding: "14px 16px", color: "#fff", fontSize: 22, fontWeight: 700, outline: "none", boxSizing: "border-box" }} />
+            </div>
+
+            {/* Description */}
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 13, color: "#8E8E93", marginBottom: 6 }}>Açıklama</div>
+              <input value={form.desc} onChange={e => setForm(f => ({...f, desc: e.target.value}))}
+                placeholder="İşlem açıklaması..."
+                style={{ width: "100%", background: "#2C2C2E", border: "none", borderRadius: 12, padding: "12px 16px", color: "#fff", fontSize: 15, outline: "none", boxSizing: "border-box" }} />
+            </div>
+
+            {/* Category */}
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 13, color: "#8E8E93", marginBottom: 8 }}>Kategori</div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8 }}>
+                {CATEGORIES[form.type].map(cat => (
+                  <button key={cat.id} onClick={() => setForm(f => ({...f, category: cat.id}))} style={{
+                    background: form.category === cat.id ? cat.color + "30" : "#2C2C2E",
+                    border: form.category === cat.id ? `2px solid ${cat.color}` : "2px solid transparent",
+                    borderRadius: 12, padding: "10px 4px", cursor: "pointer",
+                    display: "flex", flexDirection: "column", alignItems: "center", gap: 4,
+                  }}>
+                    <span style={{ fontSize: 20 }}>{cat.icon}</span>
+                    <span style={{ fontSize: 10, color: "#fff", textAlign: "center" }}>{cat.label}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Date */}
+            <div style={{ marginBottom: 20 }}>
+              <div style={{ fontSize: 13, color: "#8E8E93", marginBottom: 6 }}>Tarih</div>
+              <input type="date" value={form.date} onChange={e => setForm(f => ({...f, date: e.target.value}))}
+                style={{ width: "100%", background: "#2C2C2E", border: "none", borderRadius: 12, padding: "12px 16px", color: "#fff", fontSize: 15, outline: "none", boxSizing: "border-box" }} />
+            </div>
+
+            <button onClick={handleAdd} style={{
+              width: "100%", background: form.type === "gelir" ? "#34C759" : "#FF453A",
+              border: "none", borderRadius: 16, padding: 18, color: "#fff",
+              fontSize: 17, fontWeight: 700, cursor: "pointer",
+              boxShadow: `0 4px 20px ${form.type === "gelir" ? "rgba(52,199,89,0.4)" : "rgba(255,69,58,0.4)"}`,
+            }}>
+              {form.type === "gelir" ? "💚 Gelir Ekle" : "🔴 Gider Ekle"}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Confirm */}
+      {deleteId && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 2000, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
+          <div style={{ background: "#1C1C1E", borderRadius: 20, padding: 24, width: "100%" }}>
+            <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 12 }}>İşlemi Sil</div>
+            <div style={{ color: "#8E8E93", marginBottom: 20 }}>Bu işlemi silmek istediğinden emin misin?</div>
+            <div style={{ display: "flex", gap: 12 }}>
+              <button onClick={() => setDeleteId(null)} style={{ flex: 1, background: "#2C2C2E", border: "none", color: "#fff", borderRadius: 12, padding: 14, cursor: "pointer", fontWeight: 600 }}>İptal</button>
+              <button onClick={() => handleDelete(deleteId)} style={{ flex: 1, background: "#FF453A", border: "none", color: "#fff", borderRadius: 12, padding: 14, cursor: "pointer", fontWeight: 600 }}>Sil</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <style>{`
+        @keyframes fadeIn { from { opacity: 0; transform: translateX(-50%) translateY(-10px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }
+        * { -webkit-tap-highlight-color: transparent; }
+        input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(1); }
+      `}</style>
+    </div>
+  );
+}
