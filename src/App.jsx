@@ -151,61 +151,53 @@ export default function FinansApp() {
 
   const handleUberPDF = async (e) => {
     const file = e.target.files[0]; if (!file) return;
-    setUberLoading(true);
-    setShowUberModal(true);
-    setUberResult(null);
     
-    // Önce dosyayı oku
-    const reader = new FileReader();
-    reader.onload = async (ev) => {
-      // Varsayılan boş form
-      const defaultManual = {
-        earnings: "",
-        expenses: "",
-        period_start: new Date().toISOString().split("T")[0],
-        period_end: new Date().toISOString().split("T")[0],
-      };
+    // Hemen formu aç - boş
+    const today = new Date().toISOString().split("T")[0];
+    setUberManual({ earnings: "", expenses: "", period_start: today, period_end: today });
+    setUberLoading(false);
+    setShowUberModal(true);
 
-      try {
-        const base64 = ev.target.result.split(",")[1];
-        const res = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${import.meta.env.VITE_GEMINI_API_KEY}`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              contents: [{ parts: [
-                { inline_data: { mime_type: "application/pdf", data: base64 } },
-                { text: `Uber haftalik ekstre ozeti. Sadece JSON yaz, eksik alanlari bos birak:
+    // Arka planda Gemini ile okumayı dene
+    try {
+      const base64 = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = ev => resolve(ev.target.result.split(",")[1]);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+
+      const res = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${import.meta.env.VITE_GEMINI_API_KEY}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            contents: [{ parts: [
+              { inline_data: { mime_type: "application/pdf", data: base64 } },
+              { text: `Uber haftalik ekstre. Sadece JSON yaz:
 {"earnings":945.95,"expenses":66.27,"period_start":"2026-03-16","period_end":"2026-03-23"}
-earnings=Kazanclariniz, expenses=Para Iadeleri ve Giderler` }
-              ]}],
-              generationConfig: { temperature: 0, maxOutputTokens: 150 }
-            })
-          }
-        );
-        const data = await res.json();
-        const text = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
-        const start = text.indexOf("{");
-        const end = text.lastIndexOf("}");
-        if (start !== -1) {
-          const parsed = JSON.parse(text.substring(start, end + 1));
-          // Kısmi bile olsa doldur
-          setUberManual({
-            earnings: parsed.earnings ? String(parsed.earnings) : "",
-            expenses: parsed.expenses ? String(parsed.expenses) : "",
-            period_start: parsed.period_start || defaultManual.period_start,
-            period_end: parsed.period_end || defaultManual.period_end,
-          });
-        } else {
-          setUberManual(defaultManual);
+earnings=Kazanclariniz, expenses=Para Iadeleri ve Giderler, SADECE JSON.` }
+            ]}],
+            generationConfig: { temperature: 0, maxOutputTokens: 150 }
+          })
         }
-      } catch {
-        setUberManual(defaultManual);
+      );
+      const data = await res.json();
+      const text = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+      const s = text.indexOf("{"); const en = text.lastIndexOf("}");
+      if (s !== -1) {
+        const parsed = JSON.parse(text.substring(s, en + 1));
+        // Okunan değerleri forma yaz
+        setUberManual(f => ({
+          earnings: parsed.earnings ? String(parsed.earnings) : f.earnings,
+          expenses: parsed.expenses ? String(parsed.expenses) : f.expenses,
+          period_start: parsed.period_start || f.period_start,
+          period_end: parsed.period_end || f.period_end,
+        }));
+        showNotif("✅ PDF okundu, kontrol et!", "#34C759");
       }
-      setUberLoading(false);
-    };
-    reader.readAsDataURL(file);
+    } catch { /* sessizce geç, kullanıcı manuel girer */ }
   };
 
     const confirmUberImport = (result) => {
