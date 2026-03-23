@@ -107,7 +107,7 @@ export default function FinansApp() {
     syncToSheets("sync", { transactions });
   }, [transactions]);
 
-  const SHEETS_URL = "https://script.google.com/macros/s/AKfycbyvsWUatZwVpg_bb5Vji6UJBjC9Zd2-qAx5heyzOXnuFMbVwMh2Uj5fmnop5LSj7xRqYQ/exec";
+  const SHEETS_URL = "https://script.google.com/macros/s/AKfycbw_-qrBNPwhF1ttb0i04spTaMPzhp63jiSZhR3VKMjLQejaYyJ7CuJPSY2JXOoHy-El/exec";
 
   const syncToSheets = async (action, data) => {
     try {
