@@ -380,7 +380,7 @@ export default function FinansApp() {
 
       {/* FAB */}
       <div style={{position:"fixed",bottom:24,right:16,display:"flex",flexDirection:"column",gap:10,zIndex:100}}>
-        <input ref={uberFileRef} type="file" accept="application/pdf" onChange={handleUberPDF} style={{display:"none"}}/>
+        <input ref={uberFileRef} type="file" accept="application/pdf" onChange={handleUberPDF} onClick={e=>e.target.value=""} style={{display:"none"}}/>
         <button onClick={()=>setResetStep(1)} style={{width:48,height:48,borderRadius:"50%",background:"#3A3A3C",border:"none",color:"#fff",fontSize:18,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>🗑️</button>
         <button onClick={()=>uberFileRef.current.click()} style={{width:48,height:48,borderRadius:"50%",background:"#E65100",border:"none",color:"#fff",fontSize:18,cursor:"pointer",boxShadow:"0 4px 20px rgba(230,81,0,0.4)",display:"flex",alignItems:"center",justifyContent:"center"}}>🚗</button>
         <button onClick={()=>openAdd("gelir")} style={{width:56,height:56,borderRadius:"50%",background:"#34C759",border:"none",color:"#fff",fontSize:26,cursor:"pointer",boxShadow:"0 4px 20px rgba(52,199,89,0.4)",display:"flex",alignItems:"center",justifyContent:"center"}}>+</button>
@@ -408,7 +408,7 @@ export default function FinansApp() {
             {/* Receipt */}
             <div style={{marginBottom:16}}>
               <div style={{fontSize:13,color:"#8E8E93",marginBottom:8}}>📷 Fiş Yükle (AI ile Otomatik Oku)</div>
-              <input ref={fileRef} type="file" accept="image/*" onChange={handleReceiptUpload} style={{display:"none"}}/>
+              <input ref={fileRef} type="file" accept="image/*" onChange={handleReceiptUpload} onClick={e=>e.target.value=""} style={{display:"none"}}/>
               <button onClick={()=>fileRef.current.click()} style={{width:"100%",background:"#2C2C2E",border:"2px dashed #3A3A3C",borderRadius:14,color:"#0A84FF",padding:16,cursor:"pointer",fontSize:14,fontWeight:600}}>
                 {ocrLoading?"⏳ Fiş Okunuyor...":"📸 Fiş Fotoğrafı Çek veya Seç"}
               </button>
