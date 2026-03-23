@@ -103,7 +103,24 @@ export default function FinansApp() {
 
   useEffect(() => {
     try { localStorage.setItem("butcem_transactions", JSON.stringify(transactions)); } catch {}
+    // Google Sheets ile senkronize et
+    syncToSheets("sync", { transactions });
   }, [transactions]);
+
+  const SHEETS_URL = "https://script.google.com/macros/s/AKfycbyvsWUatZwVpg_bb5Vji6UJBjC9Zd2-qAx5heyzOXnuFMbVwMh2Uj5fmnop5LSj7xRqYQ/exec";
+
+  const syncToSheets = async (action, data) => {
+    try {
+      await fetch(SHEETS_URL, {
+        method: "POST",
+        mode: "no-cors",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action, ...data }),
+      });
+    } catch (err) {
+      console.log("Sheets sync hatası:", err);
+    }
+  };
 
   const showNotif = (msg, color = "#34C759") => {
     setNotification({ msg, color });
