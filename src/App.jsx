@@ -4,6 +4,7 @@ import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveCo
 const CATEGORIES = {
   gelir: [
     { id: "maas", label: "Maaş", icon: "💼", color: "#34C759" },
+    { id: "uber_gelir", label: "Uber Geliri", icon: "🚗", color: "#E65100" },
     { id: "freelance", label: "Freelance", icon: "💻", color: "#30D158" },
     { id: "kira_geliri", label: "Kira Geliri", icon: "🏠", color: "#32D74B" },
     { id: "yatirim", label: "Yatırım", icon: "📈", color: "#4CD964" },
@@ -19,6 +20,7 @@ const CATEGORIES = {
     { id: "yemek", label: "Yemek/Restoran", icon: "🍽️", color: "#FF8C42" },
     { id: "egitim", label: "Eğitim", icon: "📚", color: "#0A84FF" },
     { id: "kira", label: "Kira", icon: "🏡", color: "#5E5CE6" },
+    { id: "uber_gider", label: "Uber Gideri", icon: "🚗", color: "#E65100" },
     { id: "diger_gider", label: "Diğer Gider", icon: "📦", color: "#98989D" },
   ],
 };
@@ -107,7 +109,7 @@ export default function FinansApp() {
     syncToSheets("sync", { transactions });
   }, [transactions]);
 
-  const SHEETS_URL = "https://script.google.com/macros/s/AKfycbxiXhOe73ExNx-we5x4Lw-Kk6VQrEruPlJqB6433ov_sv5U0hC4kDhJ7IygmF1k2lMdBA/exec";
+  const SHEETS_URL = "https://script.google.com/macros/s/AKfycbwTVwsJDkvfFW5lI27Zo3i7p_PfjnCiHkhH8u8ztuaIBVowPQc0D4pZWnXXKJCfkEtTIw/exec";
 
   const syncToSheets = async (action, data) => {
     try {
@@ -175,22 +177,24 @@ export default function FinansApp() {
       newTxs.push({
         id: Date.now(),
         type: "gelir",
-        category: "freelance",
+        category: "uber_gelir",
         amount: result.earnings,
-        desc: `Uber Kazanç (${result.period_start} - ${result.period_end})`,
+        desc: `🚗 Uber Kazanç (${result.period_start} - ${result.period_end})`,
         date: result.period_end,
         receipt: null,
+        isUber: true,
       });
     }
     if (result.expenses > 0) {
       newTxs.push({
         id: Date.now() + 1,
         type: "gider",
-        category: "diger_gider",
+        category: "uber_gider",
         amount: result.expenses,
-        desc: `Uber Giderler (${result.period_start} - ${result.period_end})`,
+        desc: `🚗 Uber Giderler (${result.period_start} - ${result.period_end})`,
         date: result.period_end,
         receipt: null,
+        isUber: true,
       });
     }
     setTransactions(prev => [...newTxs, ...prev]);
