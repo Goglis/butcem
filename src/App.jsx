@@ -237,13 +237,17 @@ export default function FinansApp() {
   const suggestions = generateAISuggestions(transactions);
 
   const handleAdd = () => {
-    if (!form.amount || isNaN(Number(form.amount))) { showNotif("Geçerli bir tutar girin!", "#FF453A"); return; }
-    const newTx = { ...form, id: Date.now(), amount: Number(form.amount) };
+    const amt = parseFloat(String(form.amount).replace(",", "."));
+    if (!form.amount || isNaN(amt) || amt <= 0) { 
+      showNotif("Geçerli bir tutar girin!", "#FF453A"); 
+      return; 
+    }
+    const newTx = { ...form, id: Date.now(), amount: amt };
     setTransactions(prev => [newTx, ...prev]);
     setShowModal(false);
     setReceiptPreview(null);
     setForm({ type: "gider", category: "market", amount: "", desc: "", date: new Date().toISOString().split("T")[0], receipt: null, isUber: false });
-    showNotif(`${form.type === "gelir" ? "Gelir" : "Gider"} eklendi ✓`);
+    showNotif(`${form.type === "gelir" ? "💚 Gelir" : "🔴 Gider"} eklendi ✓`);
   };
 
   const handleDelete = (id) => {
@@ -320,9 +324,23 @@ SADECE JSON YAZ, baska hicbir sey yazma.` }
           amount: String(parsed.amount || ""),
           desc: parsed.desc || "",
           category: parsed.category || "diger_gider",
-          date: parsed.date || f.date
+          date: parsed.date || new Date().toISOString().split("T")[0],
         }));
-        showNotif("✅ Fiş okundu, kontrol et!");
+        // Bip sesi çal
+        try {
+          const ctx = new (window.AudioContext || window.webkitAudioContext)();
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          osc.frequency.value = 880;
+          osc.type = "sine";
+          gain.gain.setValueAtTime(0.3, ctx.currentTime);
+          gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
+          osc.start(ctx.currentTime);
+          osc.stop(ctx.currentTime + 0.3);
+        } catch(e) {}
+        showNotif("✅ Fiş okundu! Kontrol et ve ekle.");
       } catch(err) {
         console.error("Fiş okuma hatası:", err);
         showNotif("Fiş okunamadı — manuel gir", "#FF9F0A");
