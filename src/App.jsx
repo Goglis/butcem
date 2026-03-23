@@ -173,7 +173,7 @@ export default function FinansApp() {
 {"earnings":945.95,"expenses":66.27,"total":1017.14,"period_start":"2026-03-16","period_end":"2026-03-23"}
 earnings=Kazanclariniz, expenses=Para Iadeleri ve Giderler, total=Odemeler. SADECE JSON.` }
             ]}],
-            generationConfig: { temperature: 0, maxOutputTokens: 200 }
+            generationConfig: { temperature: 0, maxOutputTokens: 500 }
           })
         }
       );
