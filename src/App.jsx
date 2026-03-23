@@ -84,7 +84,6 @@ export default function FinansApp() {
   const [uberLoading, setUberLoading] = useState(false);
   const [showUberModal, setShowUberModal] = useState(false);
   const [uberResult, setUberResult] = useState(null);
-  const [uberManual, setUberManual] = useState({ earnings: "", expenses: "", period_start: "", period_end: "" });
   const fileRef = useRef();
   const uberFileRef = useRef();
 
@@ -151,96 +150,40 @@ export default function FinansApp() {
 
   const handleUberPDF = async (e) => {
     const file = e.target.files[0]; if (!file) return;
-    const today = new Date().toISOString().split("T")[0];
-    setUberManual({ earnings: "", expenses: "", period_start: today, period_end: today });
-    setUberLoading(true);
-    setShowUberModal(true);
-
-    try {
-      // PDF'in ilk sayfasını canvas'a çiz, sonra image olarak gönder
-      const script = await new Promise((resolve, reject) => {
-        if (window.pdfjsLib) { resolve(window.pdfjsLib); return; }
-        const s = document.createElement("script");
-        s.src = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js";
-        s.onload = () => {
-          window.pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
-          resolve(window.pdfjsLib);
-        };
-        s.onerror = reject;
-        document.head.appendChild(s);
-      });
-
-      const ab = await file.arrayBuffer();
-      const pdf = await script.getDocument({ data: ab }).promise;
-      const maxPages = Math.min(4, pdf.numPages);
-      
-      // İlk 4 sayfayı tek bir uzun canvas'a çiz
-      const scale = 1.5;
-      const allCanvases = [];
-      let totalHeight = 0;
-      let maxWidth = 0;
-      
-      for (let i = 1; i <= maxPages; i++) {
-        const page = await pdf.getPage(i);
-        const viewport = page.getViewport({ scale });
-        const canvas = document.createElement("canvas");
-        canvas.width = viewport.width;
-        canvas.height = viewport.height;
-        const ctx = canvas.getContext("2d");
-        await page.render({ canvasContext: ctx, viewport }).promise;
-        allCanvases.push(canvas);
-        totalHeight += viewport.height;
-        maxWidth = Math.max(maxWidth, viewport.width);
+    setUberLoading(true); setShowUberModal(true); setUberResult(null);
+    const reader = new FileReader();
+    reader.onload = async (ev) => {
+      try {
+        const base64 = ev.target.result.split(",")[1];
+        const res = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${import.meta.env.VITE_GEMINI_API_KEY}`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              contents: [{ parts: [
+                { inline_data: { mime_type: "application/pdf", data: base64 } },
+                { text: `Uber haftalik ekstre. Sadece JSON yaz:
+{"earnings":945.95,"expenses":66.27,"total":1017.14,"period_start":"2026-03-16","period_end":"2026-03-23"}
+earnings=Kazanclariniz, expenses=Para Iadeleri ve Giderler, total=Odemeler. SADECE JSON.` }
+              ]}],
+              generationConfig: { temperature: 0, maxOutputTokens: 200 }
+            })
+          }
+        );
+        const data = await res.json();
+        const text = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+        const s = text.indexOf("{"); const en = text.lastIndexOf("}");
+        if (s === -1) throw new Error("JSON yok");
+        const parsed = JSON.parse(text.substring(s, en+1));
+        setUberResult(parsed);
+      } catch(err) {
+        showNotif("PDF okunamadı", "#FF453A");
+        setShowUberModal(false);
       }
-      
-      // Tüm sayfaları tek canvas'a birleştir
-      const combined = document.createElement("canvas");
-      combined.width = maxWidth;
-      combined.height = totalHeight;
-      const combinedCtx = combined.getContext("2d");
-      combinedCtx.fillStyle = "white";
-      combinedCtx.fillRect(0, 0, maxWidth, totalHeight);
-      let yOffset = 0;
-      for (const c of allCanvases) {
-        combinedCtx.drawImage(c, 0, yOffset);
-        yOffset += c.height;
-      }
-      
-      const imageBase64 = combined.toDataURL("image/jpeg", 0.8).split(",")[1];
-
-      const res = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${import.meta.env.VITE_GEMINI_API_KEY}`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            contents: [{ parts: [
-              { inline_data: { mime_type: "image/jpeg", data: imageBase64 } },
-              { text: `Bu Uber haftalik ekstre ozet sayfasi. Sadece JSON yaz:
-{"earnings":945.95,"expenses":66.27,"period_start":"2026-03-16","period_end":"2026-03-23"}
-earnings=Kazanclariniz, expenses=Para Iadeleri ve Giderler, SADECE JSON.` }
-            ]}],
-            generationConfig: { temperature: 0, maxOutputTokens: 150 }
-          })
-        }
-      );
-      const data = await res.json();
-      const text = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
-      const s2 = text.indexOf("{"); const en = text.lastIndexOf("}");
-      if (s2 !== -1) {
-        const parsed = JSON.parse(text.substring(s2, en + 1));
-        setUberManual({
-          earnings: parsed.earnings ? String(parsed.earnings) : "",
-          expenses: parsed.expenses ? String(parsed.expenses) : "",
-          period_start: parsed.period_start || today,
-          period_end: parsed.period_end || today,
-        });
-        showNotif("✅ PDF okundu!", "#34C759");
-      }
-    } catch(err) {
-      console.error("PDF okuma:", err);
-    }
-    setUberLoading(false);
+      setUberLoading(false);
+    };
+    reader.readAsDataURL(file);
   };
 
     const confirmUberImport = (result) => {
@@ -584,86 +527,37 @@ earnings=Kazanclariniz, expenses=Para Iadeleri ve Giderler, SADECE JSON.` }
       {/* Uber Modal */}
       {showUberModal && (
         <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.85)",zIndex:2000,display:"flex",alignItems:"center",justifyContent:"center",padding:24,backdropFilter:"blur(10px)"}}>
-          <div style={{background:"#1C1C1E",borderRadius:24,padding:28,width:"100%",border:"1px solid #E6510040",maxHeight:"90vh",overflowY:"auto"}}>
+          <div style={{background:"#1C1C1E",borderRadius:24,padding:28,width:"100%",border:"1px solid #3A3A3C"}}>
             {uberLoading ? (
-              <div style={{textAlign:"center",padding:30}}>
+              <div style={{textAlign:"center",padding:20}}>
                 <div style={{fontSize:48,marginBottom:16}}>🚗</div>
                 <div style={{fontSize:18,fontWeight:700,marginBottom:8}}>PDF Okunuyor...</div>
-                <div style={{color:"#8E8E93",fontSize:14}}>Bilgiler otomatik doldurulacak</div>
+                <div style={{color:"#8E8E93",fontSize:14}}>Uber ekstreniz analiz ediliyor</div>
               </div>
-            ) : (
+            ) : uberResult ? (
               <div>
-                <div style={{fontSize:20,fontWeight:800,marginBottom:4}}>🚗 Uber Ekstre Girişi</div>
-                <div style={{fontSize:13,color:"#8E8E93",marginBottom:20}}>Otomatik doldurulanları kontrol et, eksikleri tamamla</div>
-
-                <div style={{marginBottom:14}}>
-                  <div style={{fontSize:12,color:"#34C759",fontWeight:700,marginBottom:6}}>💚 NET KAZANÇ (CAD$)</div>
-                  <input
-                    type="number"
-                    value={uberManual.earnings}
-                    onChange={e => setUberManual(f => ({...f, earnings: e.target.value}))}
-                    placeholder="örn: 945.95"
-                    style={{width:"100%",background:"#2C2C2E",border:"2px solid #34C75940",borderRadius:12,padding:"12px 16px",color:"#34C759",fontSize:20,fontWeight:700,outline:"none",boxSizing:"border-box"}}
-                  />
-                </div>
-
-                <div style={{marginBottom:14}}>
-                  <div style={{fontSize:12,color:"#FF453A",fontWeight:700,marginBottom:6}}>🔴 GİDERLER (CAD$)</div>
-                  <input
-                    type="number"
-                    value={uberManual.expenses}
-                    onChange={e => setUberManual(f => ({...f, expenses: e.target.value}))}
-                    placeholder="örn: 66.27"
-                    style={{width:"100%",background:"#2C2C2E",border:"2px solid #FF453A40",borderRadius:12,padding:"12px 16px",color:"#FF453A",fontSize:20,fontWeight:700,outline:"none",boxSizing:"border-box"}}
-                  />
-                </div>
-
-                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:20}}>
-                  <div>
-                    <div style={{fontSize:12,color:"#8E8E93",fontWeight:600,marginBottom:6}}>📅 BAŞLANGIÇ</div>
-                    <input
-                      type="date"
-                      value={uberManual.period_start}
-                      onChange={e => setUberManual(f => ({...f, period_start: e.target.value}))}
-                      style={{width:"100%",background:"#2C2C2E",border:"none",borderRadius:12,padding:"10px 12px",color:"#fff",fontSize:13,outline:"none",boxSizing:"border-box"}}
-                    />
+                <div style={{fontSize:20,fontWeight:800,marginBottom:4}}>🚗 Uber Ekstre Özeti</div>
+                <div style={{fontSize:13,color:"#8E8E93",marginBottom:20}}>{uberResult.period_start} → {uberResult.period_end}</div>
+                <div style={{display:"flex",flexDirection:"column",gap:12,marginBottom:24}}>
+                  <div style={{background:"#34C75915",border:"1px solid #34C75930",borderRadius:14,padding:16,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                    <div style={{fontSize:12,color:"#8E8E93"}}>💚 NET KAZANÇ</div>
+                    <div style={{fontSize:22,fontWeight:800,color:"#34C759"}}>{fmt(uberResult.earnings)}</div>
                   </div>
-                  <div>
-                    <div style={{fontSize:12,color:"#8E8E93",fontWeight:600,marginBottom:6}}>📅 BİTİŞ</div>
-                    <input
-                      type="date"
-                      value={uberManual.period_end}
-                      onChange={e => setUberManual(f => ({...f, period_end: e.target.value}))}
-                      style={{width:"100%",background:"#2C2C2E",border:"none",borderRadius:12,padding:"10px 12px",color:"#fff",fontSize:13,outline:"none",boxSizing:"border-box"}}
-                    />
+                  <div style={{background:"#FF453A15",border:"1px solid #FF453A30",borderRadius:14,padding:16,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                    <div style={{fontSize:12,color:"#8E8E93"}}>🔴 GİDERLER</div>
+                    <div style={{fontSize:22,fontWeight:800,color:"#FF453A"}}>{fmt(uberResult.expenses)}</div>
+                  </div>
+                  <div style={{background:"#0A84FF15",border:"1px solid #0A84FF30",borderRadius:14,padding:16,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                    <div style={{fontSize:12,color:"#8E8E93"}}>💳 TOPLAM ÖDEME</div>
+                    <div style={{fontSize:22,fontWeight:800,color:"#0A84FF"}}>{fmt(uberResult.total)}</div>
                   </div>
                 </div>
-
-                {uberManual.earnings && (
-                  <div style={{background:"#2C2C2E",borderRadius:14,padding:14,marginBottom:20}}>
-                    <div style={{fontSize:12,color:"#8E8E93",marginBottom:4}}>ÖZET</div>
-                    <div style={{display:"flex",justifyContent:"space-between"}}>
-                      <span style={{color:"#34C759",fontWeight:700}}>{fmt(Number(uberManual.earnings))} kazanç</span>
-                      <span style={{color:"#FF453A",fontWeight:700}}>{fmt(Number(uberManual.expenses))} gider</span>
-                      <span style={{color:"#0A84FF",fontWeight:700}}>{fmt(Number(uberManual.earnings) - Number(uberManual.expenses))} net</span>
-                    </div>
-                  </div>
-                )}
-
                 <div style={{display:"flex",gap:12}}>
                   <button onClick={()=>{setShowUberModal(false);setUberResult(null);}} style={{flex:1,background:"#2C2C2E",border:"none",color:"#fff",borderRadius:12,padding:14,cursor:"pointer",fontWeight:600}}>İptal</button>
-                  <button
-                    onClick={() => {
-                      const earnings = parseFloat(uberManual.earnings);
-                      const expenses = parseFloat(uberManual.expenses) || 0;
-                      if (!earnings || earnings <= 0) { showNotif("Kazanç tutarını girin!", "#FF453A"); return; }
-                      confirmUberImport({ earnings, expenses, total: earnings + expenses, period_start: uberManual.period_start, period_end: uberManual.period_end });
-                    }}
-                    style={{flex:2,background:"#34C759",border:"none",color:"#fff",borderRadius:12,padding:14,cursor:"pointer",fontWeight:700,fontSize:15}}
-                  >✅ Ekle</button>
+                  <button onClick={()=>confirmUberImport(uberResult)} style={{flex:2,background:"#34C759",border:"none",color:"#fff",borderRadius:12,padding:14,cursor:"pointer",fontWeight:700,fontSize:15}}>✅ İçe Aktar</button>
                 </div>
               </div>
-            )}
+            ) : null}
           </div>
         </div>
       )}
