@@ -133,7 +133,7 @@ export default function FinansApp() {
 {"earnings": <Kazançlarınız sayı>, "expenses": <Para İadeleri ve Giderler sayı>, "total": <Ödemeler sayı>, "period_start": "<YYYY-MM-DD>", "period_end": "<YYYY-MM-DD>"}` }
                 ]
               }],
-              generationConfig: { temperature: 0, maxOutputTokens: 500 }
+              generationConfig: { temperature: 0, maxOutputTokens: 1000 }
             })
           }
         );
@@ -280,12 +280,14 @@ export default function FinansApp() {
               contents: [{
                 parts: [
                   { inline_data: { mime_type: mediaType, data: base64 } },
-                  { text: `Bu bir fiş veya fatura fotoğrafı. Sadece JSON yaz, başka hiçbir şey yazma:
-{"amount": <toplam tutar CAD sayı>, "desc": "<kısa açıklama max 30 karakter>", "category": "<market|yemek|faturalar|ulasim|saglik|eglence|giyim|egitim|kira|diger_gider>", "date": "<YYYY-MM-DD>"}
-Bugünün tarihi: ${new Date().toISOString().split("T")[0]}` }
+                  { text: `Fisteki toplam tutari, magaza adini, kategoriyi ve tarihi JSON olarak ver. Sadece su formati kullan:
+{"amount":36.73,"desc":"Canadian Tire","category":"market","date":"2026-03-22"}
+Kategori secenekleri: market, yemek, faturalar, ulasim, saglik, eglence, giyim, egitim, kira, diger_gider
+Bugun: ${new Date().toISOString().split("T")[0]}
+SADECE JSON YAZ, baska hicbir sey yazma.` }
                 ]
               }],
-              generationConfig: { temperature: 0, maxOutputTokens: 500 }
+              generationConfig: { temperature: 0, maxOutputTokens: 1000 }
             })
           }
         );
