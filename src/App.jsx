@@ -88,7 +88,7 @@ export default function FinansApp() {
   });
   const [showModal, setShowModal] = useState(false);
   const [modalType, setModalType] = useState("gider");
-  const [form, setForm] = useState({ type: "gider", category: "market", amount: "", desc: "", date: new Date().toISOString().split("T")[0], receipt: null });
+  const [form, setForm] = useState({ type: "gider", category: "market", amount: "", desc: "", date: new Date().toISOString().split("T")[0], receipt: null, isUber: false });
   const [receiptPreview, setReceiptPreview] = useState(null);
   const [filterMonth, setFilterMonth] = useState(new Date().getMonth());
   const [filterYear, setFilterYear] = useState(new Date().getFullYear());
@@ -253,7 +253,7 @@ export default function FinansApp() {
     setTransactions(prev => [newTx, ...prev]);
     setShowModal(false);
     setReceiptPreview(null);
-    setForm({ type: "gider", category: "market", amount: "", desc: "", date: new Date().toISOString().split("T")[0], receipt: null });
+    setForm({ type: "gider", category: "market", amount: "", desc: "", date: new Date().toISOString().split("T")[0], receipt: null, isUber: false });
     showNotif(`${form.type === "gelir" ? "Gelir" : "Gider"} eklendi ✓`);
   };
 
@@ -540,6 +540,7 @@ SADECE JSON YAZ, baska hicbir sey yazma.` }
                   }}>{cat.icon}</div>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: 15, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {tx.isUber && <span style={{ fontSize: 11, background: "#E65100", borderRadius: 6, padding: "1px 6px", marginRight: 6 }}>🚗 Uber</span>}
                       {tx.desc || cat.label}
                     </div>
                     <div style={{ fontSize: 12, color: "#8E8E93", marginTop: 2 }}>{tx.date} · {cat.label}</div>
@@ -791,6 +792,25 @@ SADECE JSON YAZ, baska hicbir sey yazma.` }
               <div style={{ fontSize: 13, color: "#8E8E93", marginBottom: 6 }}>Tarih</div>
               <input type="date" value={form.date} onChange={e => setForm(f => ({...f, date: e.target.value}))}
                 style={{ width: "100%", background: "#2C2C2E", border: "none", borderRadius: 12, padding: "12px 16px", color: "#fff", fontSize: 15, outline: "none", boxSizing: "border-box" }} />
+            </div>
+
+            {/* Uber Toggle */}
+            <div style={{ marginBottom: 16 }}>
+              <button onClick={() => setForm(f => ({...f, isUber: !f.isUber}))} style={{
+                width: "100%", background: form.isUber ? "#E65100" : "#2C2C2E",
+                border: form.isUber ? "2px solid #FF6D00" : "2px solid transparent",
+                borderRadius: 14, padding: 14, color: "#fff", cursor: "pointer",
+                display: "flex", alignItems: "center", justifyContent: "center", gap: 10,
+                fontSize: 15, fontWeight: 700,
+              }}>
+                <span style={{ fontSize: 22 }}>🚗</span>
+                {form.isUber ? "✅ Uber İşlemi (İş)" : "Uber İşlemi mi? (İş Gideri/Geliri)"}
+              </button>
+              {form.isUber && (
+                <div style={{ fontSize: 12, color: "#FF9F0A", textAlign: "center", marginTop: 6 }}>
+                  Bu işlem Uber tablosuna ayrıca kaydedilecek
+                </div>
+              )}
             </div>
 
             <button onClick={handleAdd} style={{
