@@ -133,7 +133,7 @@ export default function FinansApp() {
 {"earnings": <Kazançlarınız sayı>, "expenses": <Para İadeleri ve Giderler sayı>, "total": <Ödemeler sayı>, "period_start": "<YYYY-MM-DD>", "period_end": "<YYYY-MM-DD>"}` }
                 ]
               }],
-              generationConfig: { temperature: 0, maxOutputTokens: 200 }
+              generationConfig: { temperature: 0, maxOutputTokens: 500 }
             })
           }
         );
@@ -285,7 +285,7 @@ export default function FinansApp() {
 Bugünün tarihi: ${new Date().toISOString().split("T")[0]}` }
                 ]
               }],
-              generationConfig: { temperature: 0, maxOutputTokens: 200 }
+              generationConfig: { temperature: 0, maxOutputTokens: 500 }
             })
           }
         );
