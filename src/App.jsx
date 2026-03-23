@@ -169,9 +169,8 @@ export default function FinansApp() {
           body: JSON.stringify({
             contents: [{ parts: [
               { inline_data: { mime_type: "application/pdf", data: base64 } },
-              { text: `Uber haftalik ekstre. Sadece JSON yaz:
-{"earnings":945.95,"expenses":66.27,"total":1017.14,"period_start":"2026-03-16","period_end":"2026-03-23"}
-earnings=Kazanclariniz, expenses=Para Iadeleri ve Giderler, total=Odemeler. SADECE JSON.` }
+              { text: `Kazanclariniz, Para Iadeleri ve Giderler, Odemeler degerlerini ve tarihleri bul. Yanit: E=kazanc G=gider T=toplam S=baslangic_tarihi B=bitis_tarihi
+Format: E:1424.98 G:93.92 T:1518.90 S:2026-02-23 B:2026-03-02` }
             ]}],
             generationConfig: { temperature: 0, maxOutputTokens: 500 }
           })
@@ -191,11 +190,11 @@ earnings=Kazanclariniz, expenses=Para Iadeleri ve Giderler, total=Odemeler. SADE
         return parseFloat(s) || 0;
       };
 
-      const earningsMatch = text.match(/"earnings"\s*:\s*([\d.,]+)/);
-      const expensesMatch = text.match(/"expenses"\s*:\s*([\d.,]+)/);
-      const totalMatch = text.match(/"total"\s*:\s*([\d.,]+)/);
-      const startMatch = text.match(/"period_start"\s*:\s*"([^"]+)"/);
-      const endMatch = text.match(/"period_end"\s*:\s*"([^"]+)"/);
+      const earningsMatch = text.match(/E:([\d.,]+)/);
+      const expensesMatch = text.match(/G:([\d.,]+)/);
+      const totalMatch = text.match(/T:([\d.,]+)/);
+      const startMatch = text.match(/S:(\d{4}-\d{2}-\d{2})/);
+      const endMatch = text.match(/B:(\d{4}-\d{2}-\d{2})/);
 
       const earnings = earningsMatch ? parseNum(earningsMatch[1]) : 0;
       const expenses = expensesMatch ? parseNum(expensesMatch[1]) : 0;
