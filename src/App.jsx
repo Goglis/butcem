@@ -179,9 +179,11 @@ earnings=Kazanclariniz, expenses=Para Iadeleri ve Giderler, total=Odemeler. SADE
       );
       const data = await res.json();
       console.log("Gemini response:", JSON.stringify(data).substring(0, 300));
-      const text = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+      const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+      // ```json ``` bloklarını temizle
+      const text = rawText.replace(/```json/gi, "").replace(/```/g, "").trim();
       const s = text.indexOf("{"); const en = text.lastIndexOf("}");
-      if (s === -1) throw new Error("JSON yok: " + text);
+      if (s === -1) throw new Error("JSON yok: " + text.substring(0,100));
       const parsed = JSON.parse(text.substring(s, en+1));
       setUberResult(parsed);
     } catch(err) {
