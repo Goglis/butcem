@@ -148,29 +148,73 @@ export default function FinansApp() {
     reader.readAsDataURL(file);
   };
 
+  const loadPdfJs = () => new Promise((resolve, reject) => {
+    if (window.pdfjsLib) { resolve(window.pdfjsLib); return; }
+    const script = document.createElement("script");
+    script.src = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js";
+    script.onload = () => {
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+      resolve(window.pdfjsLib);
+    };
+    script.onerror = reject;
+    document.head.appendChild(script);
+  });
+
   const handleUberPDF = async (e) => {
     const file = e.target.files[0]; if (!file) return;
     setUberLoading(true); setShowUberModal(true); setUberResult(null);
-    const reader = new FileReader();
-    reader.onload = async (ev) => {
-      try {
-        const base64 = ev.target.result.split(",")[1];
-        const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${import.meta.env.VITE_GEMINI_API_KEY}`, {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ contents: [{ parts: [{ inline_data: { mime_type: "application/pdf", data: base64 } }, { text: `Uber haftalik ekstre. Sadece JSON yaz: {"earnings":1424.98,"expenses":93.92,"total":1518.90,"period_start":"2026-02-23","period_end":"2026-03-02"}\nSADECE JSON, baska hicbir sey yazma.` }] }], generationConfig: { temperature: 0, maxOutputTokens: 1000 } })
-        });
-        const data = await res.json();
-        const text = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
-        const start = text.indexOf("{"); const end = text.lastIndexOf("}");
-        if (start === -1) throw new Error("JSON yok");
-        setUberResult(JSON.parse(text.substring(start, end+1)));
-      } catch { showNotif("PDF okunamadı", "#FF453A"); setShowUberModal(false); }
-      setUberLoading(false);
-    };
-    reader.readAsDataURL(file);
+    try {
+      const pdfjsLib = await loadPdfJs();
+      const arrayBuffer = await file.arrayBuffer();
+      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+      
+      let fullText = "";
+      const maxPages = Math.min(4, pdf.numPages);
+      for (let i = 1; i <= maxPages; i++) {
+        const page = await pdf.getPage(i);
+        const textContent = await page.getTextContent();
+        fullText += textContent.items.map(item => item.str).join(" ") + "
+";
+      }
+      
+      console.log("PDF text:", fullText.substring(0, 800));
+      
+      const parseCAD = (str) => {
+        if (!str) return 0;
+        let s = str.replace("CA$","").replace(/\./g,"").replace(",",".");
+        return parseFloat(s) || 0;
+      };
+
+      const monthMap = {"Oca":"01","Şub":"02","Mar":"03","Nis":"04","May":"05","Haz":"06","Tem":"07","Ağu":"08","Eyl":"09","Eki":"10","Kas":"11","Ara":"12"};
+
+      const earningsMatch = fullText.match(/Kazan[cç]lar[iı]n[iı]z\s+CA\$([\d.,]+)/);
+      const expensesMatch = fullText.match(/Para [İI]adeleri ve Giderler\s+CA\$([\d.,]+)/);
+      const totalMatch = fullText.match(/[Öo]demeler\s+CA\$([\d.,]+)/);
+      const dateMatch = fullText.match(/(\d{1,2})\s+(Oca|Şub|Mar|Nis|May|Haz|Tem|Ağu|Eyl|Eki|Kas|Ara)\s+(\d{4}).*?(\d{1,2})\s+(Oca|Şub|Mar|Nis|May|Haz|Tem|Ağu|Eyl|Eki|Kas|Ara)\s+(\d{4})/);
+
+      let period_start = "", period_end = "";
+      if (dateMatch) {
+        period_start = `${dateMatch[3]}-${monthMap[dateMatch[2]]}-${String(dateMatch[1]).padStart(2,"0")}`;
+        period_end = `${dateMatch[6]}-${monthMap[dateMatch[5]]}-${String(dateMatch[4]).padStart(2,"0")}`;
+      }
+
+      const earnings = earningsMatch ? parseCAD(earningsMatch[1]) : 0;
+      const expenses = expensesMatch ? parseCAD(expensesMatch[1]) : 0;
+      const total = totalMatch ? parseCAD(totalMatch[1]) : earnings + expenses;
+
+      console.log("earnings:", earnings, "expenses:", expenses, "total:", total);
+
+      if (earnings === 0) throw new Error("Kazanç bulunamadı — PDF metni okunabildi mi?");
+      setUberResult({ earnings, expenses, total, period_start, period_end });
+    } catch(err) {
+      console.error("Uber PDF hatasi:", err.message);
+      showNotif("PDF okunamadı: " + err.message, "#FF453A");
+      setShowUberModal(false);
+    }
+    setUberLoading(false);
   };
 
-  const confirmUberImport = (result) => {
+    const confirmUberImport = (result) => {
     const newTxs = [];
     if (result.earnings > 0) newTxs.push({ id: Date.now(), type: "gelir", category: "uber_gelir", amount: result.earnings, desc: `🚗 Uber Kazanç (${result.period_start} - ${result.period_end})`, date: result.period_end, isUber: true });
     if (result.expenses > 0) newTxs.push({ id: Date.now()+1, type: "gider", category: "uber_gider", amount: result.expenses, desc: `🚗 Uber Giderler (${result.period_start} - ${result.period_end})`, date: result.period_end, isUber: true });
