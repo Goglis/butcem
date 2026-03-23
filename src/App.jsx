@@ -27,23 +27,7 @@ const CATEGORIES = {
 
 const MONTHS = ["Oca","Şub","Mar","Nis","May","Haz","Tem","Ağu","Eyl","Eki","Kas","Ara"];
 
-const sampleData = [
-  { id: 1, type: "gelir", category: "maas", amount: 5200, desc: "January Salary", date: "2026-01-05", receipt: null },
-  { id: 2, type: "gider", category: "kira", amount: 1800, desc: "Rent", date: "2026-01-01", receipt: null },
-  { id: 3, type: "gider", category: "market", amount: 320, desc: "Grocery Shopping", date: "2026-01-08", receipt: null },
-  { id: 4, type: "gider", category: "faturalar", amount: 180, desc: "Hydro & Internet", date: "2026-01-10", receipt: null },
-  { id: 5, type: "gider", category: "yemek", amount: 210, desc: "Restaurants", date: "2026-01-14", receipt: null },
-  { id: 6, type: "gelir", category: "freelance", amount: 950, desc: "Project Payment", date: "2026-01-18", receipt: null },
-  { id: 7, type: "gider", category: "eglence", amount: 45, desc: "Netflix, Spotify", date: "2026-01-20", receipt: null },
-  { id: 8, type: "gider", category: "ulasim", amount: 160, desc: "Gas & Transit", date: "2026-01-22", receipt: null },
-  { id: 9, type: "gider", category: "saglik", amount: 90, desc: "Pharmacy", date: "2026-02-03", receipt: null },
-  { id: 10, type: "gelir", category: "maas", amount: 5200, desc: "February Salary", date: "2026-02-05", receipt: null },
-  { id: 11, type: "gider", category: "kira", amount: 1800, desc: "Rent", date: "2026-02-01", receipt: null },
-  { id: 12, type: "gider", category: "market", amount: 290, desc: "Grocery Shopping", date: "2026-02-10", receipt: null },
-  { id: 13, type: "gelir", category: "maas", amount: 5200, desc: "March Salary", date: "2026-03-05", receipt: null },
-  { id: 14, type: "gider", category: "kira", amount: 1800, desc: "Rent", date: "2026-03-01", receipt: null },
-  { id: 15, type: "gider", category: "giyim", amount: 185, desc: "Spring Shopping", date: "2026-03-15", receipt: null },
-];
+const sampleData = []; // Örnek veri yok — gerçek verilerini gir!
 
 function formatMoney(n) {
   return new Intl.NumberFormat("en-CA", { style: "currency", currency: "CAD", maximumFractionDigits: 0 }).format(n);
