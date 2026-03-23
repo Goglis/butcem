@@ -151,21 +151,62 @@ export default function FinansApp() {
 
   const handleUberPDF = async (e) => {
     const file = e.target.files[0]; if (!file) return;
-    
-    // Hemen formu aç - boş
     const today = new Date().toISOString().split("T")[0];
     setUberManual({ earnings: "", expenses: "", period_start: today, period_end: today });
-    setUberLoading(false);
+    setUberLoading(true);
     setShowUberModal(true);
 
-    // Arka planda Gemini ile okumayı dene
     try {
-      const base64 = await new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = ev => resolve(ev.target.result.split(",")[1]);
-        reader.onerror = reject;
-        reader.readAsDataURL(file);
+      // PDF'in ilk sayfasını canvas'a çiz, sonra image olarak gönder
+      const script = await new Promise((resolve, reject) => {
+        if (window.pdfjsLib) { resolve(window.pdfjsLib); return; }
+        const s = document.createElement("script");
+        s.src = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js";
+        s.onload = () => {
+          window.pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+          resolve(window.pdfjsLib);
+        };
+        s.onerror = reject;
+        document.head.appendChild(s);
       });
+
+      const ab = await file.arrayBuffer();
+      const pdf = await script.getDocument({ data: ab }).promise;
+      const maxPages = Math.min(4, pdf.numPages);
+      
+      // İlk 4 sayfayı tek bir uzun canvas'a çiz
+      const scale = 1.5;
+      const allCanvases = [];
+      let totalHeight = 0;
+      let maxWidth = 0;
+      
+      for (let i = 1; i <= maxPages; i++) {
+        const page = await pdf.getPage(i);
+        const viewport = page.getViewport({ scale });
+        const canvas = document.createElement("canvas");
+        canvas.width = viewport.width;
+        canvas.height = viewport.height;
+        const ctx = canvas.getContext("2d");
+        await page.render({ canvasContext: ctx, viewport }).promise;
+        allCanvases.push(canvas);
+        totalHeight += viewport.height;
+        maxWidth = Math.max(maxWidth, viewport.width);
+      }
+      
+      // Tüm sayfaları tek canvas'a birleştir
+      const combined = document.createElement("canvas");
+      combined.width = maxWidth;
+      combined.height = totalHeight;
+      const combinedCtx = combined.getContext("2d");
+      combinedCtx.fillStyle = "white";
+      combinedCtx.fillRect(0, 0, maxWidth, totalHeight);
+      let yOffset = 0;
+      for (const c of allCanvases) {
+        combinedCtx.drawImage(c, 0, yOffset);
+        yOffset += c.height;
+      }
+      
+      const imageBase64 = combined.toDataURL("image/jpeg", 0.8).split(",")[1];
 
       const res = await fetch(
         `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${import.meta.env.VITE_GEMINI_API_KEY}`,
@@ -174,8 +215,8 @@ export default function FinansApp() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             contents: [{ parts: [
-              { inline_data: { mime_type: "application/pdf", data: base64 } },
-              { text: `Uber haftalik ekstre. Sadece JSON yaz:
+              { inline_data: { mime_type: "image/jpeg", data: imageBase64 } },
+              { text: `Bu Uber haftalik ekstre ozet sayfasi. Sadece JSON yaz:
 {"earnings":945.95,"expenses":66.27,"period_start":"2026-03-16","period_end":"2026-03-23"}
 earnings=Kazanclariniz, expenses=Para Iadeleri ve Giderler, SADECE JSON.` }
             ]}],
@@ -185,19 +226,21 @@ earnings=Kazanclariniz, expenses=Para Iadeleri ve Giderler, SADECE JSON.` }
       );
       const data = await res.json();
       const text = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
-      const s = text.indexOf("{"); const en = text.lastIndexOf("}");
-      if (s !== -1) {
-        const parsed = JSON.parse(text.substring(s, en + 1));
-        // Okunan değerleri forma yaz
-        setUberManual(f => ({
-          earnings: parsed.earnings ? String(parsed.earnings) : f.earnings,
-          expenses: parsed.expenses ? String(parsed.expenses) : f.expenses,
-          period_start: parsed.period_start || f.period_start,
-          period_end: parsed.period_end || f.period_end,
-        }));
-        showNotif("✅ PDF okundu, kontrol et!", "#34C759");
+      const s2 = text.indexOf("{"); const en = text.lastIndexOf("}");
+      if (s2 !== -1) {
+        const parsed = JSON.parse(text.substring(s2, en + 1));
+        setUberManual({
+          earnings: parsed.earnings ? String(parsed.earnings) : "",
+          expenses: parsed.expenses ? String(parsed.expenses) : "",
+          period_start: parsed.period_start || today,
+          period_end: parsed.period_end || today,
+        });
+        showNotif("✅ PDF okundu!", "#34C759");
       }
-    } catch { /* sessizce geç, kullanıcı manuel girer */ }
+    } catch(err) {
+      console.error("PDF okuma:", err);
+    }
+    setUberLoading(false);
   };
 
     const confirmUberImport = (result) => {
