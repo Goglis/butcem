@@ -88,12 +88,6 @@ export default function FinansApp() {
   const [showUberModal, setShowUberModal] = useState(false);
   const [uberResult, setUberResult] = useState(null);
 
-  useEffect(() => {
-    try { localStorage.setItem("butcem_transactions", JSON.stringify(transactions)); } catch {}
-    // Google Sheets ile senkronize et
-    syncToSheets("sync", { transactions });
-  }, [transactions]);
-
   const SHEETS_URL = "https://script.google.com/macros/s/AKfycbwTVwsJDkvfFW5lI27Zo3i7p_PfjnCiHkhH8u8ztuaIBVowPQc0D4pZWnXXKJCfkEtTIw/exec";
 
   const syncToSheets = async (action, data) => {
@@ -108,6 +102,11 @@ export default function FinansApp() {
       console.log("Sheets sync hatası:", err);
     }
   };
+
+  useEffect(() => {
+    try { localStorage.setItem("butcem_transactions", JSON.stringify(transactions)); } catch {}
+    syncToSheets("sync", { transactions });
+  }, [transactions]);
 
   const showNotif = (msg, color = "#34C759") => {
     setNotification({ msg, color });
