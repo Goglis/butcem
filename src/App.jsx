@@ -180,12 +180,24 @@ earnings=Kazanclariniz, expenses=Para Iadeleri ve Giderler, total=Odemeler. SADE
       const data = await res.json();
       console.log("Gemini response:", JSON.stringify(data).substring(0, 300));
       const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
-      // ```json ``` bloklarını temizle
       const text = rawText.replace(/```json/gi, "").replace(/```/g, "").trim();
-      const s = text.indexOf("{"); const en = text.lastIndexOf("}");
-      if (s === -1) throw new Error("JSON yok: " + text.substring(0,100));
-      const parsed = JSON.parse(text.substring(s, en+1));
-      setUberResult(parsed);
+      console.log("Temiz text:", text.substring(0, 200));
+      
+      // Regex ile direkt sayıları çek - JSON kesilse bile çalışır
+      const earningsMatch = text.match(/"earnings"\s*:\s*([\d.]+)/);
+      const expensesMatch = text.match(/"expenses"\s*:\s*([\d.]+)/);
+      const totalMatch = text.match(/"total"\s*:\s*([\d.]+)/);
+      const startMatch = text.match(/"period_start"\s*:\s*"([^"]+)"/);
+      const endMatch = text.match(/"period_end"\s*:\s*"([^"]+)"/);
+      
+      const earnings = earningsMatch ? parseFloat(earningsMatch[1]) : 0;
+      const expenses = expensesMatch ? parseFloat(expensesMatch[1]) : 0;
+      const total = totalMatch ? parseFloat(totalMatch[1]) : earnings + expenses;
+      const period_start = startMatch ? startMatch[1] : new Date().toISOString().split("T")[0];
+      const period_end = endMatch ? endMatch[1] : new Date().toISOString().split("T")[0];
+      
+      if (earnings === 0) throw new Error("Kazanç bulunamadı");
+      setUberResult({ earnings, expenses, total, period_start, period_end });
     } catch(err) {
       console.error("PDF hatası:", err.message);
       showNotif("PDF okunamadı: " + err.message, "#FF453A");
