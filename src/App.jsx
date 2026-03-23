@@ -79,6 +79,7 @@ export default function FinansApp() {
   const [filterMonth, setFilterMonth] = useState(new Date().getMonth());
   const [filterYear, setFilterYear] = useState(new Date().getFullYear());
   const [deleteId, setDeleteId] = useState(null);
+  const [resetStep, setResetStep] = useState(0); // 0=kapalı, 1=ilk onay, 2=son onay
   const [ocrLoading, setOcrLoading] = useState(false);
   const [notification, setNotification] = useState(null);
   const fileRef = useRef();
@@ -249,6 +250,14 @@ export default function FinansApp() {
     setTransactions(prev => prev.filter(t => t.id !== id));
     setDeleteId(null);
     showNotif("Silindi", "#FF453A");
+  };
+
+  const handleReset = () => {
+    setTransactions([]);
+    try { localStorage.removeItem("butcem_transactions"); } catch {}
+    syncToSheets("sync", { transactions: [] });
+    setResetStep(0);
+    showNotif("Tüm veriler silindi!", "#FF453A");
   };
 
   const handleReceiptUpload = async (e) => {
@@ -683,6 +692,11 @@ SADECE JSON YAZ, baska hicbir sey yazma.` }
       {/* FAB Buttons */}
       <div style={{ position: "fixed", bottom: 24, right: 16, display: "flex", flexDirection: "column", gap: 10, zIndex: 100 }}>
         <input ref={uberFileRef} type="file" accept="application/pdf" onChange={handleUberPDF} style={{ display: "none" }} />
+        <button onClick={() => setResetStep(1)} style={{
+          width: 52, height: 52, borderRadius: "50%", background: "#3A3A3C", border: "none",
+          color: "#fff", fontSize: 18, cursor: "pointer", boxShadow: "0 4px 20px rgba(0,0,0,0.4)",
+          display: "flex", alignItems: "center", justifyContent: "center",
+        }}>🗑️</button>
         <button onClick={() => uberFileRef.current.click()} style={{
           width: 52, height: 52, borderRadius: "50%", background: "#000", border: "2px solid #fff",
           color: "#fff", fontSize: 18, cursor: "pointer", boxShadow: "0 4px 20px rgba(255,255,255,0.2)",
@@ -822,6 +836,43 @@ SADECE JSON YAZ, baska hicbir sey yazma.` }
             <div style={{ display: "flex", gap: 12 }}>
               <button onClick={() => setDeleteId(null)} style={{ flex: 1, background: "#2C2C2E", border: "none", color: "#fff", borderRadius: 12, padding: 14, cursor: "pointer", fontWeight: 600 }}>İptal</button>
               <button onClick={() => handleDelete(deleteId)} style={{ flex: 1, background: "#FF453A", border: "none", color: "#fff", borderRadius: 12, padding: 14, cursor: "pointer", fontWeight: 600 }}>Sil</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Reset Modal - Adım 1 */}
+      {resetStep === 1 && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)", zIndex: 2000, display: "flex", alignItems: "center", justifyContent: "center", padding: 24, backdropFilter: "blur(10px)" }}>
+          <div style={{ background: "#1C1C1E", borderRadius: 24, padding: 28, width: "100%", border: "1px solid #FF453A40" }}>
+            <div style={{ fontSize: 48, textAlign: "center", marginBottom: 16 }}>⚠️</div>
+            <div style={{ fontSize: 20, fontWeight: 800, marginBottom: 8, textAlign: "center" }}>Tüm Verileri Sil?</div>
+            <div style={{ color: "#8E8E93", marginBottom: 24, textAlign: "center", lineHeight: 1.6 }}>
+              Tüm işlemler, gelir ve gider kayıtları silinecek. Bu işlem geri alınamaz!
+            </div>
+            <div style={{ display: "flex", gap: 12 }}>
+              <button onClick={() => setResetStep(0)} style={{ flex: 1, background: "#2C2C2E", border: "none", color: "#fff", borderRadius: 12, padding: 14, cursor: "pointer", fontWeight: 600 }}>İptal</button>
+              <button onClick={() => setResetStep(2)} style={{ flex: 1, background: "#FF453A", border: "none", color: "#fff", borderRadius: 12, padding: 14, cursor: "pointer", fontWeight: 700 }}>Devam Et</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Reset Modal - Adım 2 (Son Onay) */}
+      {resetStep === 2 && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)", zIndex: 2000, display: "flex", alignItems: "center", justifyContent: "center", padding: 24, backdropFilter: "blur(10px)" }}>
+          <div style={{ background: "#1C1C1E", borderRadius: 24, padding: 28, width: "100%", border: "1px solid #FF453A60" }}>
+            <div style={{ fontSize: 48, textAlign: "center", marginBottom: 16 }}>🚨</div>
+            <div style={{ fontSize: 20, fontWeight: 800, marginBottom: 8, textAlign: "center", color: "#FF453A" }}>EMIN MİSİN?</div>
+            <div style={{ color: "#8E8E93", marginBottom: 8, textAlign: "center", lineHeight: 1.6 }}>
+              Bu işlem <span style={{ color: "#FF453A", fontWeight: 700 }}>GERİ ALINAMAZ!</span>
+            </div>
+            <div style={{ color: "#8E8E93", marginBottom: 24, textAlign: "center", fontSize: 13 }}>
+              Tüm işlemler hem uygulamadan hem Google Sheets'ten silinecek.
+            </div>
+            <div style={{ display: "flex", gap: 12 }}>
+              <button onClick={() => setResetStep(0)} style={{ flex: 1, background: "#2C2C2E", border: "none", color: "#fff", borderRadius: 12, padding: 14, cursor: "pointer", fontWeight: 600 }}>Vazgeç</button>
+              <button onClick={handleReset} style={{ flex: 1, background: "#FF453A", border: "2px solid #FF6B6B", color: "#fff", borderRadius: 12, padding: 14, cursor: "pointer", fontWeight: 800, fontSize: 15 }}>🗑️ Evet, Sil!</button>
             </div>
           </div>
         </div>
