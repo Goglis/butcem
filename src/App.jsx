@@ -120,9 +120,8 @@ export default function FinansApp() {
     reader.onload = async (ev) => {
       try {
         const base64 = ev.target.result.split(",")[1];
-        const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
         const res = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent?key=${apiKey}`,
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${import.meta.env.VITE_GEMINI_API_KEY}`,
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -130,20 +129,19 @@ export default function FinansApp() {
               contents: [{
                 parts: [
                   { inline_data: { mime_type: "application/pdf", data: base64 } },
-                  { text: `Bu bir Uber haftalık ekstre PDF'i. Sadece JSON formatında yanıt ver, başka hiçbir şey yazma:
-{"earnings": <Kazançlarınız tutarı sayı olarak>, "expenses": <Para İadeleri ve Giderler tutarı sayı olarak>, "total": <Ödemeler tutarı sayı olarak>, "period_start": "<YYYY-MM-DD>", "period_end": "<YYYY-MM-DD>"}
-Örnek: {"earnings": 1424.98, "expenses": 93.92, "total": 1518.90, "period_start": "2026-02-23", "period_end": "2026-03-02"}
-Sadece JSON yaz, başka hiçbir şey yazma.` }
+                  { text: `Bu bir Uber haftalık ekstre PDF. Sadece JSON yaz, başka hiçbir şey yazma:
+{"earnings": <Kazançlarınız sayı>, "expenses": <Para İadeleri ve Giderler sayı>, "total": <Ödemeler sayı>, "period_start": "<YYYY-MM-DD>", "period_end": "<YYYY-MM-DD>"}` }
                 ]
               }],
-              generationConfig: { temperature: 0.1, maxOutputTokens: 300 }
+              generationConfig: { temperature: 0, maxOutputTokens: 200 }
             })
           }
         );
         const data = await res.json();
         const text = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
         const clean = text.replace(/```json|```/g, "").trim();
-        const parsed = JSON.parse(clean);
+        const jsonMatch = clean.match(/\{[\s\S]*\}/);
+        const parsed = JSON.parse(jsonMatch ? jsonMatch[0] : clean);
         setUberResult(parsed);
       } catch(err) {
         showNotif("PDF okunamadı, tekrar dene", "#FF453A");
@@ -273,9 +271,8 @@ Sadece JSON yaz, başka hiçbir şey yazma.` }
         const base64 = ev.target.result.split(",")[1];
         if (!base64) throw new Error("Base64 okunamadı");
 
-        const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
         const res = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent?key=${apiKey}`,
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${import.meta.env.VITE_GEMINI_API_KEY}`,
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -283,23 +280,16 @@ Sadece JSON yaz, başka hiçbir şey yazma.` }
               contents: [{
                 parts: [
                   { inline_data: { mime_type: mediaType, data: base64 } },
-                  { text: `Bu bir fiş veya fatura fotoğrafı. Sadece JSON formatında yanıt ver, başka hiçbir şey yazma:
-{"amount": <toplam tutar CAD sayı olarak>, "desc": "<kısa açıklama max 30 karakter>", "category": "<market|yemek|faturalar|ulasim|saglik|eglence|giyim|egitim|kira|diger_gider>", "date": "<YYYY-MM-DD>"}
-Tarih yoksa bugün: ${new Date().toISOString().split("T")[0]}
-Sadece JSON yaz, başka hiçbir şey yazma.` }
+                  { text: `Bu bir fiş veya fatura fotoğrafı. Sadece JSON yaz, başka hiçbir şey yazma:
+{"amount": <toplam tutar CAD sayı>, "desc": "<kısa açıklama max 30 karakter>", "category": "<market|yemek|faturalar|ulasim|saglik|eglence|giyim|egitim|kira|diger_gider>", "date": "<YYYY-MM-DD>"}
+Bugünün tarihi: ${new Date().toISOString().split("T")[0]}` }
                 ]
               }],
-              generationConfig: { temperature: 0.1, maxOutputTokens: 300 }
+              generationConfig: { temperature: 0, maxOutputTokens: 200 }
             })
           }
         );
-
-        if (!res.ok) {
-          const errData = await res.json();
-          console.error("Gemini API hatası:", errData);
-          throw new Error(errData?.error?.message || "API hatası");
-        }
-
+        if (!res.ok) { const e = await res.json(); throw new Error(e?.error?.message || "API hatası"); }
         const data = await res.json();
         const text = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
         console.log("Gemini yanıtı:", text);
