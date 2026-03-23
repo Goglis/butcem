@@ -185,9 +185,21 @@ Format: E:1424.98 G:93.92 T:1518.90 S:2026-02-23 B:2026-03-02` }
       // Sayıları çek - virgüllü format da dahil (1.424,98 veya 1424.98)
       const parseNum = (str) => {
         if (!str) return 0;
-        // 1.424,98 -> 1424.98 veya 1424.98 -> 1424.98
-        const s = str.replace(/\./g, "").replace(",", ".");
-        return parseFloat(s) || 0;
+        str = str.trim();
+        // Eğer hem nokta hem virgül varsa: 1.424,98 formatı (Türkçe)
+        if (str.includes(".") && str.includes(",")) {
+          return parseFloat(str.replace(/\./g, "").replace(",", ".")) || 0;
+        }
+        // Sadece virgül varsa: 1424,98 -> 1424.98
+        if (str.includes(",")) {
+          // Virgül ondalık mı binlik mi? 3 rakamdan fazlaysa binlik
+          const parts = str.split(",");
+          if (parts[1] && parts[1].length === 3) {
+            return parseFloat(str.replace(",", "")) || 0; // binlik
+          }
+          return parseFloat(str.replace(",", ".")) || 0; // ondalık
+        }
+        return parseFloat(str) || 0;
       };
 
       const earningsMatch = text.match(/E:([\d.,]+)/);
