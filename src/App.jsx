@@ -151,39 +151,45 @@ export default function FinansApp() {
   const handleUberPDF = async (e) => {
     const file = e.target.files[0]; if (!file) return;
     setUberLoading(true); setShowUberModal(true); setUberResult(null);
-    const reader = new FileReader();
-    reader.onload = async (ev) => {
-      try {
-        const base64 = ev.target.result.split(",")[1];
-        const res = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${import.meta.env.VITE_GEMINI_API_KEY}`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              contents: [{ parts: [
-                { inline_data: { mime_type: "application/pdf", data: base64 } },
-                { text: `Uber haftalik ekstre. Sadece JSON yaz:
+    try {
+      const arrayBuffer = await file.arrayBuffer();
+      const bytes = new Uint8Array(arrayBuffer);
+      // Chunk chunk base64'e çevir
+      let binary = "";
+      for (let i = 0; i < bytes.length; i += 8192) {
+        binary += String.fromCharCode(...bytes.subarray(i, i + 8192));
+      }
+      const base64 = btoa(binary);
+
+      const res = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${import.meta.env.VITE_GEMINI_API_KEY}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            contents: [{ parts: [
+              { inline_data: { mime_type: "application/pdf", data: base64 } },
+              { text: `Uber haftalik ekstre. Sadece JSON yaz:
 {"earnings":945.95,"expenses":66.27,"total":1017.14,"period_start":"2026-03-16","period_end":"2026-03-23"}
 earnings=Kazanclariniz, expenses=Para Iadeleri ve Giderler, total=Odemeler. SADECE JSON.` }
-              ]}],
-              generationConfig: { temperature: 0, maxOutputTokens: 200 }
-            })
-          }
-        );
-        const data = await res.json();
-        const text = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
-        const s = text.indexOf("{"); const en = text.lastIndexOf("}");
-        if (s === -1) throw new Error("JSON yok");
-        const parsed = JSON.parse(text.substring(s, en+1));
-        setUberResult(parsed);
-      } catch(err) {
-        showNotif("PDF okunamadı", "#FF453A");
-        setShowUberModal(false);
-      }
-      setUberLoading(false);
-    };
-    reader.readAsDataURL(file);
+            ]}],
+            generationConfig: { temperature: 0, maxOutputTokens: 200 }
+          })
+        }
+      );
+      const data = await res.json();
+      console.log("Gemini response:", JSON.stringify(data).substring(0, 300));
+      const text = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+      const s = text.indexOf("{"); const en = text.lastIndexOf("}");
+      if (s === -1) throw new Error("JSON yok: " + text);
+      const parsed = JSON.parse(text.substring(s, en+1));
+      setUberResult(parsed);
+    } catch(err) {
+      console.error("PDF hatası:", err.message);
+      showNotif("PDF okunamadı: " + err.message, "#FF453A");
+      setShowUberModal(false);
+    }
+    setUberLoading(false);
   };
 
     const confirmUberImport = (result) => {
