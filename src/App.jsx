@@ -99,7 +99,8 @@ export default function FinansApp() {
   const [uberResult, setUberResult] = useState(null);
   const fileRef = useRef();
   const uberFileRef = useRef();
-  const GEMINI_MODELS = ["gemini-2.0-flash", "gemini-1.5-flash"];
+  const GEMINI_MODELS = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-flash-latest", "gemini-pro"];
+  const [resolvedGeminiModel, setResolvedGeminiModel] = useState(null);
 
   // Save to localStorage
   useEffect(() => {
@@ -116,12 +117,42 @@ export default function FinansApp() {
 
   const showNotif = (msg, color = "#34C759") => { setNotification({ msg, color }); setTimeout(() => setNotification(null), 3000); };
 
+  const resolveGeminiModel = async (apiKey) => {
+    if (resolvedGeminiModel) return resolvedGeminiModel;
+
+    try {
+      const listRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
+      let listData = null;
+      try { listData = await listRes.json(); } catch {}
+
+      if (listRes.ok && Array.isArray(listData?.models)) {
+        const candidates = listData.models
+          .filter((m) => Array.isArray(m.supportedGenerationMethods) && m.supportedGenerationMethods.includes("generateContent"))
+          .map((m) => (m.name || "").replace(/^models\//, ""))
+          .filter(Boolean);
+
+        const preferred = candidates.find((m) => /flash/i.test(m)) || candidates[0];
+        if (preferred) {
+          setResolvedGeminiModel(preferred);
+          return preferred;
+        }
+      }
+    } catch {}
+
+    // Liste çekilemezse bilinen adları dene
+    const fallback = GEMINI_MODELS[0];
+    setResolvedGeminiModel(fallback);
+    return fallback;
+  };
+
   const callGemini = async (parts, maxOutputTokens = 1000) => {
     const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
     if (!apiKey) throw new Error("API anahtarı bulunamadı (VITE_GEMINI_API_KEY).");
 
     let lastError = "Bilinmeyen hata";
-    for (const model of GEMINI_MODELS) {
+    const preferredModel = await resolveGeminiModel(apiKey);
+    const modelsToTry = [preferredModel, ...GEMINI_MODELS.filter((m) => m !== preferredModel)];
+    for (const model of modelsToTry) {
       try {
         const res = await fetch(
           `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
@@ -141,13 +172,14 @@ export default function FinansApp() {
 
         if (!res.ok) {
           lastError = apiErr || `Servis hatası (${res.status})`;
-          // 404 model bulunamadı ise bir sonraki modeli dene.
-          if (res.status === 404) continue;
+          // Model bulunamazsa diğer adayları dene.
+          if (res.status === 404 || /not found|not supported/i.test(lastError)) continue;
           throw new Error(lastError);
         }
 
         const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
         if (!text) throw new Error("Model yanıtı boş döndü.");
+        if (resolvedGeminiModel !== model) setResolvedGeminiModel(model);
         return text;
       } catch (err) {
         lastError = err?.message || lastError;
