@@ -1,7 +1,10 @@
 import { useState, useRef, useEffect } from "react";
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 
-const SHEETS_URL = "https://script.google.com/macros/s/AKfycbwTVwsJDkvfFW5lI27Zo3i7p_PfjnCiHkhH8u8ztuaIBVowPQc0D4pZWnXXKJCfkEtTIw/exec";
+// Vercel / .env: VITE_SHEETS_URL=https://script.google.com/macros/s/.../exec
+const SHEETS_URL =
+  import.meta.env.VITE_SHEETS_URL ||
+  "https://script.google.com/macros/s/AKfycbwhd89_4YSQC0c45HgKCRfTidvB8OYiWHMNpGnLIYpPrvFHy2ld0ytRMYQ5msEntc0_IQ/exec";
 
 const CATEGORIES = {
   gelir: [
@@ -149,6 +152,49 @@ async function parseUberPdfWithPdfJs(file) {
   return parsed;
 }
 
+function normalizeTxDate(d) {
+  if (d == null || d === "") return "";
+  const s = String(d);
+  return s.includes("T") ? s.slice(0, 10) : s;
+}
+
+function sheetRowToTx(t) {
+  const id = t.id;
+  return {
+    id: typeof id === "number" ? id : Number(id) || id,
+    type: t.type || "",
+    category: t.category || "",
+    amount: Number(t.amount || 0),
+    desc: t.desc || "",
+    date: normalizeTxDate(t.date),
+    isUber: !!t.isUber,
+    createdAt: t.createdAt || "",
+    updatedAt: t.updatedAt || "",
+    deleted: !!t.deleted,
+  };
+}
+
+function mergeTxFromSheet(prev, remoteList) {
+  const byId = {};
+  (prev || []).forEach((t) => {
+    if (t?.id == null || t.deleted) return;
+    byId[String(t.id)] = { ...t, deleted: !!t.deleted };
+  });
+  (remoteList || []).forEach((raw) => {
+    const t = sheetRowToTx(raw);
+    const id = String(t.id);
+    if (t.deleted) {
+      delete byId[id];
+      return;
+    }
+    const p = byId[id];
+    const pTs = new Date(p?.updatedAt || p?.createdAt || 0).getTime();
+    const rTs = new Date(t.updatedAt || t.createdAt || 0).getTime();
+    if (!p || (isFinite(rTs) && isFinite(pTs) && rTs >= pTs)) byId[id] = { ...t, deleted: false };
+  });
+  return Object.values(byId);
+}
+
 export default function FinansApp() {
   const [transactions, setTransactions] = useState(() => {
     try { const s = localStorage.getItem("butcem_v2"); return s ? JSON.parse(s) : []; } catch { return []; }
@@ -174,13 +220,49 @@ export default function FinansApp() {
     try { localStorage.setItem("butcem_v2", JSON.stringify(transactions)); } catch {}
   }, [transactions]);
 
-  // Sync to Sheets (debounced 1.5s)
+  // Sync to Sheets (debounced 1.5s) — payload Apps Script ile aynı olmali
   useEffect(() => {
+    if (!SHEETS_URL || !String(SHEETS_URL).includes("script.google.com")) return;
     const t = setTimeout(() => {
-      fetch(SHEETS_URL, { method: "POST", mode: "no-cors", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "sync", transactions }) }).catch(() => {});
+      const alive = transactions.filter((tx) => !tx.deleted);
+      const uberTransactions = alive.filter((tx) => tx.isUber);
+      const personalTransactions = alive.filter((tx) => !tx.isUber);
+      fetch(SHEETS_URL, {
+        method: "POST",
+        mode: "no-cors",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "sync",
+          transactions: alive,
+          uberTransactions,
+          personalTransactions,
+          sheetTargets: {
+            all: "Tüm İşlemler",
+            uber: "Uber İşlemler",
+            personal: "İşlemler",
+          },
+        }),
+      }).catch(() => {});
     }, 1500);
     return () => clearTimeout(t);
   }, [transactions]);
+
+  // Sheet'ten oku (doGet transactions) — yeni Script URL ile uyumlu
+  useEffect(() => {
+    if (!SHEETS_URL || !String(SHEETS_URL).includes("script.google.com")) return;
+    const pull = async () => {
+      try {
+        const res = await fetch(`${SHEETS_URL}?_=${Date.now()}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!Array.isArray(data.transactions)) return;
+        setTransactions((prev) => mergeTxFromSheet(prev, data.transactions));
+      } catch (_) {}
+    };
+    pull();
+    const iv = setInterval(pull, 25000);
+    return () => clearInterval(iv);
+  }, []);
 
   const showNotif = (msg, color = "#34C759") => { setNotification({ msg, color }); setTimeout(() => setNotification(null), 3000); };
 
@@ -188,7 +270,8 @@ export default function FinansApp() {
     const amt = parseFloat(String(form.amount).replace(",",".").replace("$",""));
     if (isNaN(amt) || amt <= 0) { showNotif("Geçerli bir tutar girin!", "#FF453A"); return; }
     const isUber = form.isUber || form.category === "uber_gelir" || form.category === "uber_gider";
-    const newTx = { id: Date.now(), type: form.type, category: form.category, amount: amt, desc: form.desc || getCat(form.type, form.category).label, date: form.date, isUber };
+    const nowIso = new Date().toISOString();
+    const newTx = { id: Date.now(), type: form.type, category: form.category, amount: amt, desc: form.desc || getCat(form.type, form.category).label, date: form.date, isUber, createdAt: nowIso, updatedAt: nowIso, deleted: false };
     setTransactions(prev => [newTx, ...prev]);
     setShowModal(false);
     setReceiptPreview(null);
@@ -340,14 +423,16 @@ Baska metin yok.` }
 
     const confirmUberImport = (result) => {
     const newTxs = [];
-    if (result.earnings > 0) newTxs.push({ id: Date.now(), type: "gelir", category: "uber_gelir", amount: result.earnings, desc: `🚗 Uber Kazanç (${result.period_start} - ${result.period_end})`, date: result.period_end, isUber: true });
-    if (result.expenses > 0) newTxs.push({ id: Date.now()+1, type: "gider", category: "uber_gider", amount: result.expenses, desc: `🚗 Uber Giderler (${result.period_start} - ${result.period_end})`, date: result.period_end, isUber: true });
+    const nowIso = new Date().toISOString();
+    if (result.earnings > 0) newTxs.push({ id: Date.now(), type: "gelir", category: "uber_gelir", amount: result.earnings, desc: `🚗 Uber Kazanç (${result.period_start} - ${result.period_end})`, date: result.period_end, isUber: true, createdAt: nowIso, updatedAt: nowIso, deleted: false });
+    if (result.expenses > 0) newTxs.push({ id: Date.now()+1, type: "gider", category: "uber_gider", amount: result.expenses, desc: `🚗 Uber Giderler (${result.period_start} - ${result.period_end})`, date: result.period_end, isUber: true, createdAt: nowIso, updatedAt: nowIso, deleted: false });
     setTransactions(prev => [...newTxs, ...prev]);
     setShowUberModal(false); setUberResult(null);
     showNotif("Uber verisi içe aktarıldı! ✓");
   };
 
-  const filteredTx = transactions.filter(t => { const d = new Date(t.date); return d.getMonth() === filterMonth && d.getFullYear() === filterYear; });
+  const activeTxList = transactions.filter((t) => !t.deleted);
+  const filteredTx = activeTxList.filter(t => { const d = new Date(t.date); return d.getMonth() === filterMonth && d.getFullYear() === filterYear; });
   const totalGelir = filteredTx.filter(t => t.type==="gelir").reduce((s,t) => s+t.amount, 0);
   const totalGider = filteredTx.filter(t => t.type==="gider").reduce((s,t) => s+t.amount, 0);
   const balance = totalGelir - totalGider;
@@ -355,9 +440,9 @@ Baska metin yok.` }
   const giderByCat = {}; filteredTx.filter(t => t.type==="gider").forEach(t => { const cat = getCat("gider",t.category); if (!giderByCat[t.category]) giderByCat[t.category] = { name:cat.label, value:0, color:cat.color, icon:cat.icon }; giderByCat[t.category].value += t.amount; });
   const gelirByCat = {}; filteredTx.filter(t => t.type==="gelir").forEach(t => { const cat = getCat("gelir",t.category); if (!gelirByCat[t.category]) gelirByCat[t.category] = { name:cat.label, value:0, color:cat.color, icon:cat.icon }; gelirByCat[t.category].value += t.amount; });
 
-  const monthlyData = Array.from({length:6},(_,i) => { const d = new Date(); d.setMonth(d.getMonth()-(5-i)); const m=d.getMonth(),y=d.getFullYear(); const txs=transactions.filter(t=>{const td=new Date(t.date);return td.getMonth()===m&&td.getFullYear()===y;}); return {name:MONTHS[m],Gelir:txs.filter(t=>t.type==="gelir").reduce((s,t)=>s+t.amount,0),Gider:txs.filter(t=>t.type==="gider").reduce((s,t)=>s+t.amount,0)}; });
+  const monthlyData = Array.from({length:6},(_,i) => { const d = new Date(); d.setMonth(d.getMonth()-(5-i)); const m=d.getMonth(),y=d.getFullYear(); const txs=activeTxList.filter(t=>{const td=new Date(t.date);return td.getMonth()===m&&td.getFullYear()===y;}); return {name:MONTHS[m],Gelir:txs.filter(t=>t.type==="gelir").reduce((s,t)=>s+t.amount,0),Gider:txs.filter(t=>t.type==="gider").reduce((s,t)=>s+t.amount,0)}; });
 
-  const suggestions = getAISuggestions(transactions);
+  const suggestions = getAISuggestions(activeTxList);
   const pieGiderData = Object.values(giderByCat);
   const pieGelirData = Object.values(gelirByCat);
 
@@ -417,7 +502,7 @@ Baska metin yok.` }
 
         {tab==="dashboard" && (
           <div>
-            {transactions.length===0 && <div style={{textAlign:"center",padding:40,color:"#8E8E93"}}><div style={{fontSize:48,marginBottom:12}}>💰</div><div style={{fontSize:18,fontWeight:700,marginBottom:8,color:"#fff"}}>Henüz işlem yok</div><div>Sağ alttaki + butonuyla başla!</div></div>}
+            {activeTxList.length===0 && <div style={{textAlign:"center",padding:40,color:"#8E8E93"}}><div style={{fontSize:48,marginBottom:12}}>💰</div><div style={{fontSize:18,fontWeight:700,marginBottom:8,color:"#fff"}}>Henüz işlem yok</div><div>Sağ alttaki + butonuyla başla!</div></div>}
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:16}}>
               {[{label:"En Büyük Gider",value:Object.values(giderByCat).sort((a,b)=>b.value-a.value)[0],col:"#FF453A"},{label:"En Büyük Gelir",value:Object.values(gelirByCat).sort((a,b)=>b.value-a.value)[0],col:"#34C759"}].map((s,i)=>s.value?(
                 <div key={i} style={{background:"#1C1C1E",borderRadius:16,padding:16}}>
