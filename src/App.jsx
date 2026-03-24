@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 
-const SHEETS_URL = "https://script.google.com/macros/s/AKfycbxoojJFK3pmJ48n8IXoninUUlMX2NxjP7XAfc-n9b5bAwkq5O5LyAHHCfBVOP7tA2SObg/exec";
+const SHEETS_URL = "https://script.google.com/macros/s/AKfycbyPD0TbIhAFJq7Ta-zodSsNpPtWiA1QY2jdkwujI-9DqMLzmJcTSJdKuXr9v5kgMjakug/exec";
 
 const CATEGORIES = {
   gelir: [
