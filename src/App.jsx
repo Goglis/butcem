@@ -4,7 +4,7 @@ import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveCo
 // Vercel / .env: VITE_SHEETS_URL=https://script.google.com/macros/s/.../exec
 const SHEETS_URL =
   import.meta.env.VITE_SHEETS_URL ||
-  "https://script.google.com/macros/s/AKfycbw5C8HawWKSjr5VmSuYa95WzY_i41uoef5AnKD9pGveyo0SrT9-9wdALPWtJgs7sjtqzw/exec";
+  "https://script.google.com/macros/s/AKfycbxaKwZDW-B6OHkPlb4dp8VBRnEK9BtETxQOR9GvwpBvmqIpdoTxfg13SE1-9Bc34qJe3A/exec";
 
 const CATEGORIES = {
   gelir: [
@@ -39,6 +39,10 @@ function fmt(n) {
 
 function getCat(type, id) {
   return CATEGORIES[type]?.find(c => c.id === id) || { label: id, icon: "📌", color: "#888" };
+}
+
+function txTypeLabel(tx) {
+  return tx.type === "gelir" ? "Gelir" : tx.type === "gider" ? "Gider" : "";
 }
 
 function playBeep() {
@@ -181,6 +185,7 @@ function mergeTxFromSheet(prev, remoteList) {
     byId[String(t.id)] = { ...t, deleted: !!t.deleted };
   });
   (remoteList || []).forEach((raw) => {
+    if (raw && raw.deleted) return;
     const t = sheetRowToTx(raw);
     const id = String(t.id);
     if (t.deleted) {
@@ -228,7 +233,7 @@ export default function FinansApp() {
     try { localStorage.setItem(LS_KEY, JSON.stringify(transactions)); } catch {}
   }, [transactions]);
 
-  // Sync to Sheets (debounced 1.5s) — payload Apps Script ile aynı olmali
+  // Sync to Sheets (debounced 1.5s) — tum kayitlar + silinenler (deleted:true) ki Sheet'ten satir silinsin
   useEffect(() => {
     if (!SHEETS_URL || !String(SHEETS_URL).includes("script.google.com")) return;
     const t = setTimeout(() => {
@@ -241,7 +246,7 @@ export default function FinansApp() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           action: "sync",
-          transactions: alive,
+          transactions,
           uberTransactions,
           personalTransactions,
           sheetTargets: {
@@ -289,7 +294,14 @@ export default function FinansApp() {
     showNotif(`${form.type === "gelir" ? "💚 Gelir" : "🔴 Gider"} eklendi ✓`);
   };
 
-  const handleDelete = (id) => { setTransactions(prev => prev.filter(t => t.id !== id)); setDeleteId(null); showNotif("Silindi", "#FF453A"); };
+  const handleDelete = (id) => {
+    const nowIso = new Date().toISOString();
+    setTransactions((prev) =>
+      prev.map((t) => (String(t.id) === String(id) ? { ...t, deleted: true, updatedAt: nowIso } : t))
+    );
+    setDeleteId(null);
+    showNotif("Silindi", "#FF453A");
+  };
 
   const handleReset = () => {
     setTransactions([]);
@@ -537,13 +549,18 @@ Baska metin yok.` }
             <div style={{fontSize:17,fontWeight:700,marginBottom:12}}>Son İşlemler</div>
             {filteredTx.slice(0,5).map(tx=>{
               const cat=getCat(tx.type,tx.category);
-              return <div key={tx.id} style={{background:"#1C1C1E",borderRadius:14,padding:"12px 14px",marginBottom:8,display:"flex",alignItems:"center",gap:12}}>
+              return <div key={tx.id} style={{background:"#1C1C1E",borderRadius:14,padding:"12px 14px",marginBottom:8,display:"flex",alignItems:"flex-start",gap:12}}>
                 <div style={{width:42,height:42,borderRadius:12,background:cat.color+"25",display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,flexShrink:0}}>{cat.icon}</div>
                 <div style={{flex:1,minWidth:0}}>
-                  <div style={{fontSize:14,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{tx.isUber&&<span style={{fontSize:10,background:"#E65100",borderRadius:6,padding:"1px 5px",marginRight:5}}>🚗</span>}{tx.desc||cat.label}</div>
-                  <div style={{fontSize:12,color:"#8E8E93"}}>{tx.date} · {cat.label}</div>
+                  <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",marginBottom:4}}>
+                    <span style={{fontSize:10,fontWeight:700,letterSpacing:0.3,padding:"2px 8px",borderRadius:6,background:tx.type==="gelir"?"#34C75928":"#FF453A28",color:tx.type==="gelir"?"#34C759":"#FF453A"}}>{txTypeLabel(tx)}</span>
+                    {tx.isUber && <span style={{fontSize:10,background:"#E65100",borderRadius:6,padding:"2px 6px",fontWeight:700}}>Uber</span>}
+                    <span style={{fontSize:12,fontWeight:600,color:"#AEAEB2"}}>{cat.label}</span>
+                  </div>
+                  <div style={{fontSize:14,fontWeight:600,lineHeight:1.35,display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical",overflow:"hidden",wordBreak:"break-word"}}>{tx.desc||cat.label}</div>
+                  <div style={{fontSize:11,color:"#8E8E93",marginTop:4}}>{tx.date}</div>
                 </div>
-                <div style={{fontSize:15,fontWeight:700,color:tx.type==="gelir"?"#34C759":"#FF453A",flexShrink:0}}>{tx.type==="gelir"?"+":"-"}{fmt(tx.amount)}</div>
+                <div style={{fontSize:15,fontWeight:700,color:tx.type==="gelir"?"#34C759":"#FF453A",flexShrink:0,textAlign:"right",minWidth:72}}>{tx.type==="gelir"?"+":"-"}{fmt(tx.amount)}</div>
               </div>;
             })}
             {suggestions[0] && <div style={{background:"linear-gradient(135deg,#1C2D4A,#0A84FF20)",borderRadius:16,padding:16,marginTop:8,border:"1px solid #0A84FF30"}}><div style={{fontSize:12,color:"#0A84FF",fontWeight:700,marginBottom:6}}>🤖 AI ÖNERİSİ</div><div style={{fontSize:14,lineHeight:1.5,color:"#E5E5EA"}}>{suggestions[0].text}</div></div>}
@@ -555,15 +572,20 @@ Baska metin yok.` }
             {filteredTx.length===0 && <div style={{textAlign:"center",padding:40,color:"#8E8E93"}}><div style={{fontSize:40,marginBottom:12}}>📭</div><div>Bu ay işlem yok</div></div>}
             {filteredTx.map(tx=>{
               const cat=getCat(tx.type,tx.category);
-              return <div key={tx.id} style={{background:"#1C1C1E",borderRadius:14,padding:14,marginBottom:8,display:"flex",alignItems:"center",gap:12}}>
+              return <div key={tx.id} style={{background:"#1C1C1E",borderRadius:14,padding:14,marginBottom:8,display:"flex",alignItems:"flex-start",gap:12}}>
                 <div style={{width:46,height:46,borderRadius:14,background:cat.color+"22",display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,flexShrink:0,border:`1px solid ${cat.color}40`}}>{cat.icon}</div>
                 <div style={{flex:1,minWidth:0}}>
-                  <div style={{fontSize:15,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{tx.isUber&&<span style={{fontSize:10,background:"#E65100",borderRadius:6,padding:"1px 5px",marginRight:5}}>🚗</span>}{tx.desc||cat.label}</div>
-                  <div style={{fontSize:12,color:"#8E8E93",marginTop:2}}>{tx.date} · {cat.label}</div>
+                  <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",marginBottom:4}}>
+                    <span style={{fontSize:10,fontWeight:700,letterSpacing:0.3,padding:"2px 8px",borderRadius:6,background:tx.type==="gelir"?"#34C75928":"#FF453A28",color:tx.type==="gelir"?"#34C759":"#FF453A"}}>{txTypeLabel(tx)}</span>
+                    {tx.isUber && <span style={{fontSize:10,background:"#E65100",borderRadius:6,padding:"2px 6px",fontWeight:700}}>Uber</span>}
+                    <span style={{fontSize:12,fontWeight:600,color:"#AEAEB2"}}>{cat.label}</span>
+                  </div>
+                  <div style={{fontSize:15,fontWeight:600,lineHeight:1.35,display:"-webkit-box",WebkitLineClamp:3,WebkitBoxOrient:"vertical",overflow:"hidden",wordBreak:"break-word"}}>{tx.desc||cat.label}</div>
+                  <div style={{fontSize:11,color:"#8E8E93",marginTop:4}}>{tx.date}</div>
                 </div>
-                <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:6}}>
-                  <div style={{fontSize:16,fontWeight:700,color:tx.type==="gelir"?"#34C759":"#FF453A"}}>{tx.type==="gelir"?"+":"-"}{fmt(tx.amount)}</div>
-                  <button onClick={()=>setDeleteId(tx.id)} style={{background:"#FF453A20",border:"none",color:"#FF453A",borderRadius:8,padding:"3px 10px",fontSize:11,cursor:"pointer"}}>Sil</button>
+                <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:6,flexShrink:0}}>
+                  <div style={{fontSize:16,fontWeight:700,color:tx.type==="gelir"?"#34C759":"#FF453A",textAlign:"right",minWidth:76}}>{tx.type==="gelir"?"+":"-"}{fmt(tx.amount)}</div>
+                  <button type="button" onClick={()=>setDeleteId(tx.id)} style={{background:"#FF453A20",border:"none",color:"#FF453A",borderRadius:8,padding:"3px 10px",fontSize:11,cursor:"pointer"}}>Sil</button>
                 </div>
               </div>;
             })}
