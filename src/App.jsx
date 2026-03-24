@@ -32,32 +32,35 @@ const CATEGORIES = {
 const MONTHS = ["Oca","Şub","Mar","Nis","May","Haz","Tem","Ağu","Eyl","Eki","Kas","Ara"];
 const EMPTY_FORM = { type: "gider", category: "market", amount: "", desc: "", date: new Date().toISOString().split("T")[0], isUber: false };
 
-/** Google model adları sık değişir; gemini-2.0-flash yeni anahtarlarda 404 verebilir — sırayla dene */
+/** Yeni API anahtarlarında 1.5 / eski 2.0 sonekleri sık 404 verir; güncel 2.5 ailesi + v1/v1beta */
+const GEMINI_API_VERSIONS = ["v1", "v1beta"];
 const GEMINI_MODEL_FALLBACKS = [
-  "gemini-1.5-flash",
-  "gemini-1.5-flash-latest",
-  "gemini-2.0-flash-001",
-  "gemini-2.5-flash-preview-05-20",
-  "gemini-1.5-pro",
+  "gemini-2.5-flash",
+  "gemini-2.5-flash-lite",
+  "gemini-2.5-pro",
+  "gemini-2.0-flash",
+  "gemini-flash-latest",
 ];
 
 async function geminiGenerateContent(body) {
   const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
   if (!apiKey) throw new Error("VITE_GEMINI_API_KEY tanımlı değil");
   let lastErr = "";
-  for (const model of GEMINI_MODEL_FALLBACKS) {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    const data = await res.json();
-    if (res.ok && data.candidates?.[0]?.content?.parts?.length) {
-      return data;
+  for (const ver of GEMINI_API_VERSIONS) {
+    for (const model of GEMINI_MODEL_FALLBACKS) {
+      const url = `https://generativelanguage.googleapis.com/${ver}/models/${model}:generateContent?key=${apiKey}`;
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (res.ok && data.candidates?.[0]?.content?.parts?.length) {
+        return data;
+      }
+      lastErr = data?.error?.message || `${res.status} ${res.statusText}`;
+      console.warn(`[Gemini] ${ver}/${model}:`, lastErr);
     }
-    lastErr = data?.error?.message || `${res.status} ${res.statusText}`;
-    console.warn(`[Gemini] ${model}:`, lastErr);
   }
   throw new Error(lastErr || "Gemini yanıt vermedi");
 }
