@@ -4,7 +4,8 @@ import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveCo
 // Vercel / .env: VITE_SHEETS_URL=https://script.google.com/macros/s/.../exec
 const SHEETS_URL =
   import.meta.env.VITE_SHEETS_URL ||
-  "https://script.google.com/macros/s/AKfycby4V4Svc64crmYQWr7h_A10QqRSw1AP2-_R9YyrqrN1bya8e79zDeqC9N4EBagIfZe_Fg/exec";
+  "https://script.google.com/macros/s/AKfycbw5C8HawWKSjr5VmSuYa95WzY_i41uoef5AnKD9pGveyo0SrT9-9wdALPWtJgs7sjtqzw/exec";
+
 const CATEGORIES = {
   gelir: [
     { id: "maas", label: "Maaş", icon: "💼", color: "#34C759" },
@@ -195,8 +196,15 @@ function mergeTxFromSheet(prev, remoteList) {
 }
 
 export default function FinansApp() {
+  const LS_KEY = "butcem_v3";
   const [transactions, setTransactions] = useState(() => {
-    try { const s = localStorage.getItem("butcem_v2"); return s ? JSON.parse(s) : []; } catch { return []; }
+    try {
+      const s = localStorage.getItem(LS_KEY);
+      if (s !== null && s !== "") return JSON.parse(s);
+      return [];
+    } catch {
+      return [];
+    }
   });
   const [tab, setTab] = useState("dashboard");
   const [showModal, setShowModal] = useState(false);
@@ -211,12 +219,13 @@ export default function FinansApp() {
   const [uberLoading, setUberLoading] = useState(false);
   const [showUberModal, setShowUberModal] = useState(false);
   const [uberResult, setUberResult] = useState(null);
+  const [pullingSheets, setPullingSheets] = useState(false);
   const fileRef = useRef();
   const uberFileRef = useRef();
 
   // Save to localStorage
   useEffect(() => {
-    try { localStorage.setItem("butcem_v2", JSON.stringify(transactions)); } catch {}
+    try { localStorage.setItem(LS_KEY, JSON.stringify(transactions)); } catch {}
   }, [transactions]);
 
   // Sync to Sheets (debounced 1.5s) — payload Apps Script ile aynı olmali
@@ -246,24 +255,26 @@ export default function FinansApp() {
     return () => clearTimeout(t);
   }, [transactions]);
 
-  // Sheet'ten oku (doGet transactions) — yeni Script URL ile uyumlu
-  useEffect(() => {
-    if (!SHEETS_URL || !String(SHEETS_URL).includes("script.google.com")) return;
-    const pull = async () => {
-      try {
-        const res = await fetch(`${SHEETS_URL}?_=${Date.now()}`);
-        if (!res.ok) return;
-        const data = await res.json();
-        if (!Array.isArray(data.transactions)) return;
-        setTransactions((prev) => mergeTxFromSheet(prev, data.transactions));
-      } catch (_) {}
-    };
-    pull();
-    const iv = setInterval(pull, 25000);
-    return () => clearInterval(iv);
-  }, []);
-
   const showNotif = (msg, color = "#34C759") => { setNotification({ msg, color }); setTimeout(() => setNotification(null), 3000); };
+
+  const pullFromSheet = async () => {
+    if (!SHEETS_URL || !String(SHEETS_URL).includes("script.google.com")) {
+      showNotif("Sheet URL tanımlı değil", "#FF453A");
+      return;
+    }
+    setPullingSheets(true);
+    try {
+      const res = await fetch(`${SHEETS_URL}?_=${Date.now()}`);
+      if (!res.ok) throw new Error("Sunucu yanıt vermedi");
+      const data = await res.json();
+      if (!Array.isArray(data.transactions)) throw new Error("transactions yok");
+      setTransactions((prev) => mergeTxFromSheet(prev, data.transactions));
+      showNotif("Sheet'ten yüklendi", "#34C759");
+    } catch (e) {
+      showNotif("Sheet çekilemedi: " + (e?.message || ""), "#FF453A");
+    }
+    setPullingSheets(false);
+  };
 
   const handleAdd = () => {
     const amt = parseFloat(String(form.amount).replace(",",".").replace("$",""));
@@ -280,7 +291,15 @@ export default function FinansApp() {
 
   const handleDelete = (id) => { setTransactions(prev => prev.filter(t => t.id !== id)); setDeleteId(null); showNotif("Silindi", "#FF453A"); };
 
-  const handleReset = () => { setTransactions([]); try { localStorage.removeItem("butcem_v2"); } catch {} setResetStep(0); showNotif("Tüm veriler silindi!", "#FF453A"); };
+  const handleReset = () => {
+    setTransactions([]);
+    try {
+      localStorage.removeItem("butcem_v2");
+      localStorage.removeItem(LS_KEY);
+    } catch {}
+    setResetStep(0);
+    showNotif("Tüm veriler silindi!", "#FF453A");
+  };
 
   const handleReceiptUpload = async (e) => {
     const file = e.target.files[0];
@@ -456,7 +475,10 @@ Baska metin yok.` }
       <div style={{padding:"56px 20px 0",background:"linear-gradient(180deg,#1C1C1E 0%,#000 100%)"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
           <div><div style={{fontSize:13,color:"#8E8E93"}}>Hoş geldin 👋</div><div style={{fontSize:22,fontWeight:700}}>Bütçem</div></div>
-          <div style={{display:"flex",gap:8}}>
+          <div style={{display:"flex",gap:8,alignItems:"center"}}>
+            <button type="button" onClick={pullFromSheet} disabled={pullingSheets} title="Google Sheet'ten verileri çek" style={{background:"#2C2C2E",border:"none",color:"#0A84FF",borderRadius:10,padding:"6px 10px",fontSize:13,cursor:pullingSheets?"wait":"pointer",fontWeight:700}}>
+              {pullingSheets ? "…" : "☁️"}
+            </button>
             <select value={filterMonth} onChange={e=>setFilterMonth(Number(e.target.value))} style={{background:"#2C2C2E",color:"#fff",border:"none",borderRadius:10,padding:"6px 10px",fontSize:13}}>
               {MONTHS.map((m,i)=><option key={i} value={i}>{m}</option>)}
             </select>
