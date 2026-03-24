@@ -31,7 +31,7 @@ const MONTHS = ["Oca","Şub","Mar","Nis","May","Haz","Tem","Ağu","Eyl","Eki","K
 const EMPTY_FORM = { type: "gider", category: "market", amount: "", desc: "", date: new Date().toISOString().split("T")[0], isUber: false };
 
 function fmt(n) {
-  return new Intl.NumberFormat("en-CA", { style: "currency", currency: "CAD", maximumFractionDigits: 0 }).format(n || 0);
+  return new Intl.NumberFormat("en-CA", { style: "currency", currency: "CAD", minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n || 0);
 }
 
 function getCat(type, id) {
@@ -178,7 +178,8 @@ BASLANGIC:2026-03-16
 BITIS:2026-03-23
 Sadece bu formatta yaz, baska hicbir sey ekleme.` }
             ]}],
-            generationConfig: { temperature: 0, maxOutputTokens: 500 }
+            generationConfig: { temperature: 0, maxOutputTokens: 500 },
+            thinkingConfig: { thinkingBudget: 0 }
           })
         }
       );
