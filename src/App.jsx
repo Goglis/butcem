@@ -321,6 +321,27 @@ Sadece bu formatta yaz, baska hicbir sey ekleme.` }
       if (expenses <= 0 && total > 0 && earnings > 0) {
         expenses = Math.max(0, Math.round((total - earnings) * 100) / 100);
       }
+      // Hala 0 ise aynı PDF'den sadece gider/kesinti toplamını tekrar iste.
+      if (expenses <= 0) {
+        const expenseOnlyRaw = await callGemini(
+          [
+            { inline_data: { mime_type: "application/pdf", data: base64 } },
+            { text: `Uber ekstre PDF icin SADECE toplam gider/kesinti tutarini bul.
+Sadece su formatta cevap ver:
+GIDER:66.27
+
+Gidere dahil et: Uber fee, service fee, booking fee, tax, insurance, toll, adjustments ve diger kesintiler.
+Eger hic kesinti yoksa GIDER:0 yaz.` }
+          ],
+          200
+        );
+        const expenseOnlyText = String(expenseOnlyRaw || "").replace(/```/g, "").trim();
+        const expenseOnlyMatch = expenseOnlyText.match(/(?:GIDER|GİDER|EXPENSE|EXPENSES|DEDUCTIONS|FEES)\s*:\s*([-\d.,]+)/i);
+        if (expenseOnlyMatch) {
+          const parsedExpense = parseNum(expenseOnlyMatch[1]);
+          if (parsedExpense > 0) expenses = parsedExpense;
+        }
+      }
       const period_start = startMatch ? startMatch[1] : new Date().toISOString().split("T")[0];
       const period_end = endMatch ? endMatch[1] : new Date().toISOString().split("T")[0];
 
