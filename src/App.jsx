@@ -97,6 +97,7 @@ export default function FinansApp() {
   const [uberLoading, setUberLoading] = useState(false);
   const [showUberModal, setShowUberModal] = useState(false);
   const [uberResult, setUberResult] = useState(null);
+  const [markUberBusiness, setMarkUberBusiness] = useState(true);
   const fileRef = useRef();
   const uberFileRef = useRef();
   const GEMINI_MODELS = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-flash-latest", "gemini-pro"];
@@ -326,7 +327,7 @@ export default function FinansApp() {
       e.target.value = "";
       return;
     }
-    setUberLoading(true); setShowUberModal(true); setUberResult(null);
+    setUberLoading(true); setShowUberModal(true); setUberResult(null); setMarkUberBusiness(true);
     try {
       // 1) Önce lokal/kararlı parser dene (AI'dan bağımsız).
       try {
@@ -502,12 +503,13 @@ BITIS:2026-03-23` }
     e.target.value = "";
   };
 
-    const confirmUberImport = (result) => {
+  const confirmUberImport = (result) => {
     const newTxs = [];
-    if (result.earnings > 0) newTxs.push({ id: Date.now(), type: "gelir", category: "uber_gelir", amount: result.earnings, desc: `🚗 Uber Kazanç (${result.period_start} - ${result.period_end})`, date: result.period_end, isUber: true });
-    if (result.expenses > 0) newTxs.push({ id: Date.now()+1, type: "gider", category: "uber_gider", amount: result.expenses, desc: `🚗 Uber Giderler (${result.period_start} - ${result.period_end})`, date: result.period_end, isUber: true });
+    const uberFlag = !!markUberBusiness;
+    if (result.earnings > 0) newTxs.push({ id: Date.now(), type: "gelir", category: "uber_gelir", amount: result.earnings, desc: `🚗 Uber Kazanç (${result.period_start} - ${result.period_end})`, date: result.period_end, isUber: uberFlag });
+    if (result.expenses > 0) newTxs.push({ id: Date.now()+1, type: "gider", category: "uber_gider", amount: result.expenses, desc: `🚗 Uber Giderler (${result.period_start} - ${result.period_end})`, date: result.period_end, isUber: uberFlag });
     setTransactions(prev => [...newTxs, ...prev]);
-    setShowUberModal(false); setUberResult(null);
+    setShowUberModal(false); setUberResult(null); setMarkUberBusiness(true);
     showNotif("Uber verisi içe aktarıldı! ✓");
   };
 
@@ -874,8 +876,19 @@ BITIS:2026-03-23` }
                     <div style={{fontSize:22,fontWeight:800,color:"#0A84FF"}}>{fmt(uberResult.total)}</div>
                   </div>
                 </div>
+                <label style={{display:"flex",alignItems:"center",gap:10,background:markUberBusiness?"#E6510022":"#2C2C2E",border:markUberBusiness?"1px solid #E65100AA":"1px solid #3A3A3C",borderRadius:12,padding:"10px 12px",marginBottom:16,cursor:"pointer"}}>
+                  <input
+                    type="checkbox"
+                    checked={markUberBusiness}
+                    onChange={e=>setMarkUberBusiness(e.target.checked)}
+                    style={{width:16,height:16}}
+                  />
+                  <span style={{fontSize:13,color:"#E5E5EA"}}>
+                    Vergi icin Uber islemi olarak isaretle (Sheet'te ayri listelemek icin)
+                  </span>
+                </label>
                 <div style={{display:"flex",gap:12}}>
-                  <button onClick={()=>{setShowUberModal(false);setUberResult(null);}} style={{flex:1,background:"#2C2C2E",border:"none",color:"#fff",borderRadius:12,padding:14,cursor:"pointer",fontWeight:600}}>İptal</button>
+                  <button onClick={()=>{setShowUberModal(false);setUberResult(null);setMarkUberBusiness(true);}} style={{flex:1,background:"#2C2C2E",border:"none",color:"#fff",borderRadius:12,padding:14,cursor:"pointer",fontWeight:600}}>İptal</button>
                   <button onClick={()=>confirmUberImport(uberResult)} style={{flex:2,background:"#34C759",border:"none",color:"#fff",borderRadius:12,padding:14,cursor:"pointer",fontWeight:700,fontSize:15}}>✅ İçe Aktar</button>
                 </div>
               </div>
