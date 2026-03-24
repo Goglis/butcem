@@ -117,6 +117,81 @@ export default function FinansApp() {
 
   const showNotif = (msg, color = "#34C759") => { setNotification({ msg, color }); setTimeout(() => setNotification(null), 3000); };
 
+  const parseUberDate = (day, mon, year) => {
+    const months = {
+      oca: 1, ocak: 1, jan: 1,
+      sub: 2, şub: 2, subat: 2, şubat: 2, feb: 2,
+      mar: 3,
+      nis: 4, nisan: 4, apr: 4,
+      may: 5,
+      haz: 6, haziran: 6, jun: 6,
+      tem: 7, temmuz: 7, jul: 7,
+      agu: 8, ağu: 8, agustos: 8, ağustos: 8, aug: 8,
+      eyl: 9, eylul: 9, eylül: 9, sep: 9,
+      eki: 10, ekim: 10, oct: 10,
+      kas: 11, kasim: 11, kasım: 11, nov: 11,
+      ara: 12, aralik: 12, aralık: 12, dec: 12
+    };
+    const key = String(mon || "").toLowerCase().trim();
+    const m = months[key];
+    const d = Number(day);
+    const y = Number(year);
+    if (!m || !d || !y) return "";
+    return `${String(y).padStart(4, "0")}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+  };
+
+  const parseMoneyText = (raw) => {
+    if (!raw) return 0;
+    const str = String(raw).replace(/[^\d.,-]/g, "");
+    if (str.includes(".") && str.includes(",")) {
+      const lastDot = str.lastIndexOf(".");
+      const lastComma = str.lastIndexOf(",");
+      if (lastDot > lastComma) return parseFloat(str.replace(/,/g, "")) || 0; // 1,424.98
+      return parseFloat(str.replace(/\./g, "").replace(",", ".")) || 0; // 1.424,98
+    }
+    if (str.includes(",")) {
+      const parts = str.split(",");
+      if (parts[1] && parts[1].length === 3) return parseFloat(str.replace(/,/g, "")) || 0; // 1,424
+      return parseFloat(str.replace(",", ".")) || 0; // 424,98
+    }
+    return parseFloat(str) || 0;
+  };
+
+  const extractMoneyByLabel = (text, labelRegex) => {
+    const m = text.match(new RegExp(`${labelRegex}[\\s\\S]{0,60}?CA\\$\\s*([\\-\\d.,]+)`, "i"));
+    return m ? parseMoneyText(m[1]) : 0;
+  };
+
+  const parseUberSummaryFromText = (text) => {
+    const periodMatch = text.match(/(\d{1,2})\s+([A-Za-zÇĞİÖŞÜçğıöşü]{3,})\s+(\d{4})\s+\d{2}\s*-\s*(\d{1,2})\s+([A-Za-zÇĞİÖŞÜçğıöşü]{3,})\s+(\d{4})\s+\d{2}/i);
+    const period_start = periodMatch ? parseUberDate(periodMatch[1], periodMatch[2], periodMatch[3]) : "";
+    const period_end = periodMatch ? parseUberDate(periodMatch[4], periodMatch[5], periodMatch[6]) : "";
+
+    const earningsMain = extractMoneyByLabel(text, "Kazançlarınız(?!\\s*dökümü)");
+    const expenses = extractMoneyByLabel(text, "Para\\s+İadeleri\\s+ve\\s+Giderler(?!\\s*dökümü)");
+    const prevWeek = extractMoneyByLabel(text, "Önceki\\s+haftalardaki\\s+etkinlikler");
+    const payments = extractMoneyByLabel(text, "Ödemeler");
+
+    const earnings = Math.round((earningsMain + prevWeek) * 100) / 100;
+    const total = payments > 0 ? payments : Math.round((earnings + expenses) * 100) / 100;
+    return { earnings, expenses, total, period_start, period_end };
+  };
+
+  const parseUberPdfLocally = async (file) => {
+    const pdfjs = await import("https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.min.mjs");
+    if (pdfjs?.GlobalWorkerOptions) {
+      pdfjs.GlobalWorkerOptions.workerSrc = "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.worker.min.mjs";
+    }
+    const arrayBuffer = await file.arrayBuffer();
+    const pdf = await pdfjs.getDocument({ data: arrayBuffer }).promise;
+    const firstPage = await pdf.getPage(1);
+    const content = await firstPage.getTextContent();
+    const pageText = (content.items || []).map((i) => i.str || "").join("\n");
+    const parsed = parseUberSummaryFromText(pageText);
+    if (parsed.earnings <= 0) throw new Error("PDF yerel parser kazanç bulamadı");
+    return parsed;
+  };
+
   const resolveGeminiModel = async (apiKey) => {
     if (resolvedGeminiModel) return resolvedGeminiModel;
 
@@ -253,6 +328,24 @@ export default function FinansApp() {
     }
     setUberLoading(true); setShowUberModal(true); setUberResult(null);
     try {
+      // 1) Önce lokal/kararlı parser dene (AI'dan bağımsız).
+      try {
+        const localParsed = await parseUberPdfLocally(file);
+        const today = new Date().toISOString().split("T")[0];
+        setUberResult({
+          earnings: localParsed.earnings,
+          expenses: localParsed.expenses,
+          total: localParsed.total,
+          period_start: localParsed.period_start || today,
+          period_end: localParsed.period_end || today
+        });
+        setUberLoading(false);
+        e.target.value = "";
+        return;
+      } catch (localErr) {
+        console.warn("Yerel PDF parse başarısız, AI fallback:", localErr?.message);
+      }
+
       const arrayBuffer = await file.arrayBuffer();
       const bytes = new Uint8Array(arrayBuffer);
       // Chunk chunk base64'e çevir
