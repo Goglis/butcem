@@ -4,7 +4,7 @@ import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveCo
 // Vercel / .env: VITE_SHEETS_URL=https://script.google.com/macros/s/.../exec
 const SHEETS_URL =
   import.meta.env.VITE_SHEETS_URL ||
-  "https://script.google.com/macros/s/AKfycbw5C8HawWKSjr5VmSuYa95WzY_i41uoef5AnKD9pGveyo0SrT9-9wdALPWtJgs7sjtqzw/exec";
+  "https://script.google.com/macros/s/AKfycbxaKwZDW-B6OHkPlb4dp8VBRnEK9BtETxQOR9GvwpBvmqIpdoTxfg13SE1-9Bc34qJe3A/exec";
 
 const CATEGORIES = {
   gelir: [
