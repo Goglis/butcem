@@ -331,6 +331,48 @@ Kurallar:
       if (total <= 0 && earnings > 0) total = Math.round((earnings + Math.max(0, expenses)) * 100) / 100;
       if (earnings <= 0 && total > 0) earnings = Math.max(0, Math.round((total - Math.max(0, expenses)) * 100) / 100);
       if (expenses <= 0 && total > 0 && earnings > 0) expenses = Math.max(0, Math.round((total - earnings) * 100) / 100);
+      // Uber özet mantığı: Ödemeler = Kazançlar + ÖncekiHafta + Giderler
+      if (expenses <= 0 && total > 0 && mainEarnings > 0) {
+        expenses = Math.max(0, Math.round((total - mainEarnings - Math.max(0, prevWeek)) * 100) / 100);
+      }
+
+      // Hala gider yoksa ayrı bir çağrıyla sadece "Para İadeleri ve Giderler" satırını zorla çek.
+      if (expenses <= 0) {
+        const expenseRaw = await callGemini(
+          [
+            { inline_data: { mime_type: "application/pdf", data: base64 } },
+            { text: `Uber haftalik ekstre PDF'sinde sadece "Para İadeleri ve Giderler" satirindaki tutari bul.
+Sadece su formatta cevap ver:
+GIDERLER:66.27
+Not: Yukaridaki satir haftalik ozetin ilk sayfasinda geciyor.` }
+          ],
+          120
+        );
+        const expenseText = String(expenseRaw || "").replace(/```/g, "").trim();
+        const forceExpenseMatch = expenseText.match(/(?:GIDERLER|GİDERLER|GIDER|GİDER)\s*[:=]\s*([-\d.,]+)/i);
+        if (forceExpenseMatch) expenses = parseNum(forceExpenseMatch[1]);
+      }
+
+      // Ödemeler de eksik kalırsa ayrı doğrulama çağrısı.
+      if (total <= 0) {
+        const paymentRaw = await callGemini(
+          [
+            { inline_data: { mime_type: "application/pdf", data: base64 } },
+            { text: `Uber haftalik ekstre PDF'sinde sadece "Ödemeler" satirindaki tutari bul.
+Sadece su formatta cevap ver:
+ODEMELER:1017.14` }
+          ],
+          120
+        );
+        const paymentText = String(paymentRaw || "").replace(/```/g, "").trim();
+        const forcePaymentMatch = paymentText.match(/(?:ODEMELER|ÖDEMELER|ODEME|ÖDEME)\s*[:=]\s*([-\d.,]+)/i);
+        if (forcePaymentMatch) total = parseNum(forcePaymentMatch[1]);
+      }
+
+      // Son güvenlik: gider hala 0 ise ama total > earnings ise aradaki farkı gider kabul et.
+      if (expenses <= 0 && total > earnings) {
+        expenses = Math.max(0, Math.round((total - earnings) * 100) / 100);
+      }
 
       let period_start = startMatch ? startMatch[1] : "";
       let period_end = endMatch ? endMatch[1] : "";
