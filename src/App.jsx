@@ -272,6 +272,7 @@ GIDER:66.27
 TOPLAM:1017.14
 BASLANGIC:2026-03-16
 BITIS:2026-03-23
+NOT: GIDER alanina tum kesintilerin toplamini yaz (Uber service fee, booking fee, tax, insurance, adjustment, toll, diger kesintiler).
 Sadece bu formatta yaz, baska hicbir sey ekleme.` }
         ],
         500
@@ -302,7 +303,7 @@ Sadece bu formatta yaz, baska hicbir sey ekleme.` }
 
       const earningsMatch = text.match(/(?:KAZANC|KAZANÇ|EARNINGS)\s*:\s*([-\d.,]+)/i);
       const prevMatch = text.match(/(?:ONCEKI|ÖNCEKİ|PREVIOUS)\s*:\s*([-\d.,]+)/i);
-      const expensesMatch = text.match(/(?:GIDER|GİDER|EXPENSES)\s*:\s*([-\d.,]+)/i);
+      const expensesMatch = text.match(/(?:GIDER|GİDER|GIDERLER|GİDERLER|MASRAF|MASRAFLAR|KESINTI|KESİNTİ|KESINTILER|KESİNTİLER|EXPENSE|EXPENSES|DEDUCTIONS|FEES)\s*:\s*([-\d.,]+)/i);
       const totalMatch = text.match(/(?:TOPLAM|TOTAL)\s*:\s*([-\d.,]+)/i);
       const startMatch = text.match(/BASLANGIC:(\d{4}-\d{2}-\d{2})/i);
       const endMatch = text.match(/BITIS:(\d{4}-\d{2}-\d{2})/i);
@@ -310,11 +311,15 @@ Sadece bu formatta yaz, baska hicbir sey ekleme.` }
       const earningsBase = earningsMatch ? parseNum(earningsMatch[1]) : 0;
       const prevWeeks = prevMatch ? parseNum(prevMatch[1]) : 0;
       let earnings = Math.round((earningsBase + prevWeeks) * 100) / 100;
-      const expenses = expensesMatch ? parseNum(expensesMatch[1]) : 0;
+      let expenses = expensesMatch ? parseNum(expensesMatch[1]) : 0;
       const total = totalMatch ? parseNum(totalMatch[1]) : earnings + expenses;
       // Bazı ekstrelere kazanç ayrı gelmeyebilir; toplam-giderden türet.
       if (earnings <= 0 && total > 0) {
         earnings = Math.max(0, Math.round((total - expenses) * 100) / 100);
+      }
+      // Bazı ekstrelere gider ayrı gelmeyebilir; toplam-kazançtan türet.
+      if (expenses <= 0 && total > 0 && earnings > 0) {
+        expenses = Math.max(0, Math.round((total - earnings) * 100) / 100);
       }
       const period_start = startMatch ? startMatch[1] : new Date().toISOString().split("T")[0];
       const period_end = endMatch ? endMatch[1] : new Date().toISOString().split("T")[0];
@@ -575,7 +580,7 @@ Sadece bu formatta yaz, baska hicbir sey ekleme.` }
             {/* Receipt */}
             <div style={{marginBottom:16}}>
               <div style={{fontSize:13,color:"#8E8E93",marginBottom:8}}>📷 Fiş Yükle (AI ile Otomatik Oku)</div>
-              <input ref={fileRef} type="file" accept="image/*" onChange={handleReceiptUpload} onClick={e=>e.target.value=""} style={{display:"none"}}/>
+              <input ref={fileRef} type="file" accept="image/*" capture="environment" onChange={handleReceiptUpload} onClick={e=>e.target.value=""} style={{display:"none"}}/>
               <button onClick={()=>fileRef.current.click()} style={{width:"100%",background:"#2C2C2E",border:"2px dashed #3A3A3C",borderRadius:14,color:"#0A84FF",padding:16,cursor:"pointer",fontSize:14,fontWeight:600}}>
                 {ocrLoading?"⏳ Fiş Okunuyor...":"📸 Fiş Fotoğrafı Çek veya Seç"}
               </button>
