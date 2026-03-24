@@ -3,7 +3,7 @@ import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveCo
 
 const SHEETS_URL =
   import.meta.env.VITE_SHEETS_URL ||
-  "https://script.google.com/macros/s/AKfycbwTVwsJDkvfFW5lI27Zo3i7p_PfjnCiHkhH8u8ztuaIBVowPQc0D4pZWnXXKJCfkEtTIw/exec";
+  "https://script.google.com/macros/s/AKfycbzr08XJ8XhGuga_ZjTHqk1Fw8I_Ep4tXwieIe16p01_tjUWlAlZtWydMGLa2GPJOlxzvw/exec";
 
 const CATEGORIES = {
   gelir: [
