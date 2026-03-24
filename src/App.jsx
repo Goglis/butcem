@@ -3,7 +3,7 @@ import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveCo
 
 const SHEETS_URL =
   import.meta.env.VITE_SHEETS_URL ||
-  "https://script.google.com/macros/s/AKfycbzr08XJ8XhGuga_ZjTHqk1Fw8I_Ep4tXwieIe16p01_tjUWlAlZtWydMGLa2GPJOlxzvw/exec";
+  "https://script.google.com/macros/s/AKfycbwTVwsJDkvfFW5lI27Zo3i7p_PfjnCiHkhH8u8ztuaIBVowPQc0D4pZWnXXKJCfkEtTIw/exec";
 
 const CATEGORIES = {
   gelir: [
@@ -31,6 +31,36 @@ const CATEGORIES = {
 
 const MONTHS = ["Oca","Şub","Mar","Nis","May","Haz","Tem","Ağu","Eyl","Eki","Kas","Ara"];
 const EMPTY_FORM = { type: "gider", category: "market", amount: "", desc: "", date: new Date().toISOString().split("T")[0], isUber: false };
+
+/** Google model adları sık değişir; gemini-2.0-flash yeni anahtarlarda 404 verebilir — sırayla dene */
+const GEMINI_MODEL_FALLBACKS = [
+  "gemini-1.5-flash",
+  "gemini-1.5-flash-latest",
+  "gemini-2.0-flash-001",
+  "gemini-2.5-flash-preview-05-20",
+  "gemini-1.5-pro",
+];
+
+async function geminiGenerateContent(body) {
+  const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+  if (!apiKey) throw new Error("VITE_GEMINI_API_KEY tanımlı değil");
+  let lastErr = "";
+  for (const model of GEMINI_MODEL_FALLBACKS) {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    if (res.ok && data.candidates?.[0]?.content?.parts?.length) {
+      return data;
+    }
+    lastErr = data?.error?.message || `${res.status} ${res.statusText}`;
+    console.warn(`[Gemini] ${model}:`, lastErr);
+  }
+  throw new Error(lastErr || "Gemini yanıt vermedi");
+}
 
 function fmt(n) {
   return new Intl.NumberFormat("en-CA", { style: "currency", currency: "CAD", maximumFractionDigits: 0 }).format(n || 0);
@@ -283,11 +313,19 @@ export default function FinansApp() {
       setOcrLoading(true);
       try {
         const base64 = ev.target.result.split(",")[1];
-        const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${import.meta.env.VITE_GEMINI_API_KEY}`, {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ contents: [{ parts: [{ inline_data: { mime_type: mediaType, data: base64 } }, { text: `Fisteki toplam tutari bul. Sadece JSON yaz: {"amount":36.73,"desc":"Canadian Tire","category":"market","date":"2026-03-22"}\nKategori: market, yemek, faturalar, ulasim, saglik, eglence, giyim, egitim, kira, diger_gider\nBugun: ${new Date().toISOString().split("T")[0]}\nSADECE JSON, baska hicbir sey yazma.` }] }], generationConfig: { temperature: 0, maxOutputTokens: 1000 } })
+        const data = await geminiGenerateContent({
+          contents: [
+            {
+              parts: [
+                { inline_data: { mime_type: mediaType, data: base64 } },
+                {
+                  text: `Fisteki toplam tutari bul. Sadece JSON yaz: {"amount":36.73,"desc":"Canadian Tire","category":"market","date":"2026-03-22"}\nKategori: market, yemek, faturalar, ulasim, saglik, eglence, giyim, egitim, kira, diger_gider\nBugun: ${new Date().toISOString().split("T")[0]}\nSADECE JSON, baska hicbir sey yazma.`,
+                },
+              ],
+            },
+          ],
+          generationConfig: { temperature: 0, maxOutputTokens: 1000 },
         });
-        const data = await res.json();
         const text = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
         const start = text.indexOf("{"); const end = text.lastIndexOf("}");
         if (start === -1) throw new Error("JSON yok");
@@ -337,28 +375,26 @@ export default function FinansApp() {
       }
       const base64 = btoa(binary);
 
-      const res = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${import.meta.env.VITE_GEMINI_API_KEY}`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            contents: [{ parts: [
+      const data = await geminiGenerateContent({
+        contents: [
+          {
+            parts: [
               { inline_data: { mime_type: "application/pdf", data: base64 } },
-              { text: `Uber ekstre PDF. Her satira bir deger yaz:
+              {
+                text: `Uber ekstre PDF. Her satira bir deger yaz:
 KAZANC:945.95
 ONCEKI:4.92
 GIDER:66.27
 TOPLAM:1017.14
 BASLANGIC:2026-03-16
 BITIS:2026-03-23
-Sadece bu formatta yaz, baska hicbir sey ekleme.` }
-            ]}],
-            generationConfig: { temperature: 0, maxOutputTokens: 500 }
-          })
-        }
-      );
-      const data = await res.json();
+Sadece bu formatta yaz, baska hicbir sey ekleme.`,
+              },
+            ],
+          },
+        ],
+        generationConfig: { temperature: 0, maxOutputTokens: 500 },
+      });
       console.log("Gemini response:", JSON.stringify(data).substring(0, 300));
       const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
       const text = rawText.replace(/```json/gi, "").replace(/```/g, "").trim();
