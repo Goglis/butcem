@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 
-const SHEETS_URL = "https://script.google.com/macros/s/AKfycbwTVwsJDkvfFW5lI27Zo3i7p_PfjnCiHkhH8u8ztuaIBVowPQc0D4pZWnXXKJCfkEtTIw/exec";
+const SHEETS_URL = "https://script.google.com/macros/s/AKfycbxoojJFK3pmJ48n8IXoninUUlMX2NxjP7XAfc-n9b5bAwkq5O5LyAHHCfBVOP7tA2SObg/exec";
 
 const CATEGORIES = {
   gelir: [
@@ -111,12 +111,59 @@ export default function FinansApp() {
   // Sync to Sheets (debounced 1.5s)
   useEffect(() => {
     const t = setTimeout(() => {
-      fetch(SHEETS_URL, { method: "POST", mode: "no-cors", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "sync", transactions }) }).catch(() => {});
+      const uberTransactions = transactions.filter(tx => tx.isUber);
+      const personalTransactions = transactions.filter(tx => !tx.isUber);
+      fetch(SHEETS_URL, {
+        method: "POST",
+        mode: "no-cors",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "sync",
+          transactions, // tum islemler
+          uberTransactions, // sadece uber isaretli islemler
+          personalTransactions, // uber disi kisel islemler
+          sheetTargets: {
+            all: "Tüm İşlemler",
+            uber: "Uber İşlemler",
+            personal: "İşlemler"
+          }
+        })
+      }).catch(() => {});
     }, 1500);
     return () => clearTimeout(t);
   }, [transactions]);
 
   const showNotif = (msg, color = "#34C759") => { setNotification({ msg, color }); setTimeout(() => setNotification(null), 3000); };
+
+  const mergeTransactionsByUpdatedAt = (base, incoming) => {
+    const byId = {};
+    (base || []).forEach((t) => { if (t?.id !== undefined) byId[String(t.id)] = t; });
+    (incoming || []).forEach((t) => {
+      if (!t || t.id === undefined || t.id === null) return;
+      const id = String(t.id);
+      const prev = byId[id];
+      const prevTs = new Date(prev?.updatedAt || prev?.createdAt || 0).getTime();
+      const nextTs = new Date(t.updatedAt || t.createdAt || 0).getTime();
+      if (!prev || (!isNaN(nextTs) && nextTs >= prevTs)) byId[id] = t;
+    });
+    return Object.values(byId);
+  };
+
+  // Pull latest from Sheets so phone/chrome stay in sync
+  useEffect(() => {
+    const pull = async () => {
+      try {
+        const res = await fetch(`${SHEETS_URL}?action=pull&_ts=${Date.now()}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        const remote = Array.isArray(data?.transactions) ? data.transactions : [];
+        setTransactions((prev) => mergeTransactionsByUpdatedAt(prev, remote));
+      } catch {}
+    };
+    pull();
+    const iv = setInterval(pull, 20000);
+    return () => clearInterval(iv);
+  }, []);
 
   const parseUberDate = (day, mon, year) => {
     const months = {
@@ -268,7 +315,8 @@ export default function FinansApp() {
     const amt = parseFloat(String(form.amount).replace(",",".").replace("$",""));
     if (isNaN(amt) || amt <= 0) { showNotif("Geçerli bir tutar girin!", "#FF453A"); return; }
     const isUber = form.isUber || form.category === "uber_gelir" || form.category === "uber_gider";
-    const newTx = { id: Date.now(), type: form.type, category: form.category, amount: amt, desc: form.desc || getCat(form.type, form.category).label, date: form.date, isUber };
+    const nowIso = new Date().toISOString();
+    const newTx = { id: Date.now(), type: form.type, category: form.category, amount: amt, desc: form.desc || getCat(form.type, form.category).label, date: form.date, isUber, createdAt: nowIso, updatedAt: nowIso, deleted: false };
     setTransactions(prev => [newTx, ...prev]);
     setShowModal(false);
     setReceiptPreview(null);
@@ -276,7 +324,12 @@ export default function FinansApp() {
     showNotif(`${form.type === "gelir" ? "💚 Gelir" : "🔴 Gider"} eklendi ✓`);
   };
 
-  const handleDelete = (id) => { setTransactions(prev => prev.filter(t => t.id !== id)); setDeleteId(null); showNotif("Silindi", "#FF453A"); };
+  const handleDelete = (id) => {
+    const nowIso = new Date().toISOString();
+    setTransactions(prev => prev.map(t => String(t.id) === String(id) ? { ...t, deleted: true, updatedAt: nowIso } : t));
+    setDeleteId(null);
+    showNotif("Silindi", "#FF453A");
+  };
 
   const handleReset = () => { setTransactions([]); try { localStorage.removeItem("butcem_v2"); } catch {} setResetStep(0); showNotif("Tüm veriler silindi!", "#FF453A"); };
 
@@ -506,14 +559,16 @@ BITIS:2026-03-23` }
   const confirmUberImport = (result) => {
     const newTxs = [];
     const uberFlag = !!markUberBusiness;
-    if (result.earnings > 0) newTxs.push({ id: Date.now(), type: "gelir", category: "uber_gelir", amount: result.earnings, desc: `🚗 Uber Kazanç (${result.period_start} - ${result.period_end})`, date: result.period_end, isUber: uberFlag });
-    if (result.expenses > 0) newTxs.push({ id: Date.now()+1, type: "gider", category: "uber_gider", amount: result.expenses, desc: `🚗 Uber Giderler (${result.period_start} - ${result.period_end})`, date: result.period_end, isUber: uberFlag });
+    const nowIso = new Date().toISOString();
+    if (result.earnings > 0) newTxs.push({ id: Date.now(), type: "gelir", category: "uber_gelir", amount: result.earnings, desc: `🚗 Uber Kazanç (${result.period_start} - ${result.period_end})`, date: result.period_end, isUber: uberFlag, createdAt: nowIso, updatedAt: nowIso, deleted: false });
+    if (result.expenses > 0) newTxs.push({ id: Date.now()+1, type: "gider", category: "uber_gider", amount: result.expenses, desc: `🚗 Uber Giderler (${result.period_start} - ${result.period_end})`, date: result.period_end, isUber: uberFlag, createdAt: nowIso, updatedAt: nowIso, deleted: false });
     setTransactions(prev => [...newTxs, ...prev]);
     setShowUberModal(false); setUberResult(null); setMarkUberBusiness(true);
     showNotif("Uber verisi içe aktarıldı! ✓");
   };
 
-  const filteredTx = transactions.filter(t => { const d = new Date(t.date); return d.getMonth() === filterMonth && d.getFullYear() === filterYear; });
+  const activeTransactions = transactions.filter(t => !t.deleted);
+  const filteredTx = activeTransactions.filter(t => { const d = new Date(t.date); return d.getMonth() === filterMonth && d.getFullYear() === filterYear; });
   const totalGelir = filteredTx.filter(t => t.type==="gelir").reduce((s,t) => s+t.amount, 0);
   const totalGider = filteredTx.filter(t => t.type==="gider").reduce((s,t) => s+t.amount, 0);
   const balance = totalGelir - totalGider;
@@ -521,9 +576,9 @@ BITIS:2026-03-23` }
   const giderByCat = {}; filteredTx.filter(t => t.type==="gider").forEach(t => { const cat = getCat("gider",t.category); if (!giderByCat[t.category]) giderByCat[t.category] = { name:cat.label, value:0, color:cat.color, icon:cat.icon }; giderByCat[t.category].value += t.amount; });
   const gelirByCat = {}; filteredTx.filter(t => t.type==="gelir").forEach(t => { const cat = getCat("gelir",t.category); if (!gelirByCat[t.category]) gelirByCat[t.category] = { name:cat.label, value:0, color:cat.color, icon:cat.icon }; gelirByCat[t.category].value += t.amount; });
 
-  const monthlyData = Array.from({length:6},(_,i) => { const d = new Date(); d.setMonth(d.getMonth()-(5-i)); const m=d.getMonth(),y=d.getFullYear(); const txs=transactions.filter(t=>{const td=new Date(t.date);return td.getMonth()===m&&td.getFullYear()===y;}); return {name:MONTHS[m],Gelir:txs.filter(t=>t.type==="gelir").reduce((s,t)=>s+t.amount,0),Gider:txs.filter(t=>t.type==="gider").reduce((s,t)=>s+t.amount,0)}; });
+  const monthlyData = Array.from({length:6},(_,i) => { const d = new Date(); d.setMonth(d.getMonth()-(5-i)); const m=d.getMonth(),y=d.getFullYear(); const txs=activeTransactions.filter(t=>{const td=new Date(t.date);return td.getMonth()===m&&td.getFullYear()===y;}); return {name:MONTHS[m],Gelir:txs.filter(t=>t.type==="gelir").reduce((s,t)=>s+t.amount,0),Gider:txs.filter(t=>t.type==="gider").reduce((s,t)=>s+t.amount,0)}; });
 
-  const suggestions = getAISuggestions(transactions);
+  const suggestions = getAISuggestions(activeTransactions);
   const pieGiderData = Object.values(giderByCat);
   const pieGelirData = Object.values(gelirByCat);
 
@@ -589,7 +644,7 @@ BITIS:2026-03-23` }
 
         {tab==="dashboard" && (
           <div>
-            {transactions.length===0 && <div style={{textAlign:"center",padding:40,color:"#8E8E93"}}><div style={{fontSize:48,marginBottom:12}}>💰</div><div style={{fontSize:18,fontWeight:700,marginBottom:8,color:"#fff"}}>Henüz işlem yok</div><div>Sağ alttaki + butonuyla başla!</div></div>}
+            {activeTransactions.length===0 && <div style={{textAlign:"center",padding:40,color:"#8E8E93"}}><div style={{fontSize:48,marginBottom:12}}>💰</div><div style={{fontSize:18,fontWeight:700,marginBottom:8,color:"#fff"}}>Henüz işlem yok</div><div>Sağ alttaki + butonuyla başla!</div></div>}
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:16}}>
               {[{label:"En Büyük Gider",value:Object.values(giderByCat).sort((a,b)=>b.value-a.value)[0],col:"#FF453A"},{label:"En Büyük Gelir",value:Object.values(gelirByCat).sort((a,b)=>b.value-a.value)[0],col:"#34C759"}].map((s,i)=>s.value?(
                 <div key={i} style={{background:"#1C1C1E",borderRadius:16,padding:16}}>
