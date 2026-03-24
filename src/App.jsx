@@ -4,7 +4,7 @@ import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveCo
 // Vercel / .env: VITE_SHEETS_URL=https://script.google.com/macros/s/.../exec
 const SHEETS_URL =
   import.meta.env.VITE_SHEETS_URL ||
-  "https://script.google.com/macros/s/AKfycbxaKwZDW-B6OHkPlb4dp8VBRnEK9BtETxQOR9GvwpBvmqIpdoTxfg13SE1-9Bc34qJe3A/exec";
+  "https://script.google.com/macros/s/AKfycbw5C8HawWKSjr5VmSuYa95WzY_i41uoef5AnKD9pGveyo0SrT9-9wdALPWtJgs7sjtqzw/exec";
 
 const CATEGORIES = {
   gelir: [
@@ -45,6 +45,15 @@ function txTypeLabel(tx) {
   return tx.type === "gelir" ? "Gelir" : tx.type === "gider" ? "Gider" : "";
 }
 
+function capitalizeWordsTr(s) {
+  if (!s || typeof s !== "string") return "";
+  return s.split(/\s+/).map((w) => {
+    if (!w) return w;
+    const lower = w.toLocaleLowerCase("tr-TR");
+    return lower.charAt(0).toLocaleUpperCase("tr-TR") + lower.slice(1);
+  }).join(" ");
+}
+
 function playBeep() {
   try {
     const ctx = new (window.AudioContext || window.webkitAudioContext)();
@@ -56,22 +65,6 @@ function playBeep() {
     gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
     osc.start(ctx.currentTime); osc.stop(ctx.currentTime + 0.3);
   } catch(e) {}
-}
-
-function getAISuggestions(transactions) {
-  const suggestions = [];
-  const now = new Date();
-  const thisMonth = transactions.filter(t => { const d = new Date(t.date); return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear(); });
-  const gelir = thisMonth.filter(t => t.type === "gelir").reduce((s,t) => s+t.amount, 0);
-  const gider = thisMonth.filter(t => t.type === "gider").reduce((s,t) => s+t.amount, 0);
-  const balance = gelir - gider;
-  const byCat = {};
-  thisMonth.filter(t => t.type === "gider").forEach(t => { byCat[t.category] = (byCat[t.category]||0) + t.amount; });
-  if (gider > gelir * 0.8) suggestions.push({ type: "warning", icon: "⚠️", text: "Bu ay giderleriniz gelirinizin %80'ini aştı. Tasarruf planı oluşturun." });
-  if (byCat["yemek"] > gelir * 0.15) suggestions.push({ type: "tip", icon: "🍽️", text: `Yemek harcamaları (${fmt(byCat["yemek"])}) yüksek. Evde yemek yaparak tasarruf edebilirsiniz.` });
-  if (balance > 0) suggestions.push({ type: "positive", icon: "🎯", text: `Aylık ${fmt(balance)} fazlanızı yatırıma yönlendirin.` });
-  if (balance > 3000) suggestions.push({ type: "positive", icon: "📈", text: "Gelirinizin %10'unu acil fon için biriktirin." });
-  return suggestions;
 }
 
 function parseUberDate(day, mon, year) {
@@ -162,6 +155,38 @@ function normalizeTxDate(d) {
   return s.includes("T") ? s.slice(0, 10) : s;
 }
 
+/** Ay/yıl filtresi — ISO tarih parse (timezone kaynaklı boş grafik/özet önlenir) */
+function txMonthYear(tx) {
+  const raw = normalizeTxDate(tx?.date);
+  if (!raw || typeof raw !== "string") return null;
+  const m = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return null;
+  const y = Number(m[1]);
+  const mo = Number(m[2]) - 1;
+  const d = Number(m[3]);
+  if (!y || mo < 0 || mo > 11 || !d) return null;
+  return { month: mo, year: y };
+}
+
+function getAISuggestions(transactions) {
+  const suggestions = [];
+  const now = new Date();
+  const thisMonth = transactions.filter((t) => {
+    const my = txMonthYear(t);
+    return my && my.month === now.getMonth() && my.year === now.getFullYear();
+  });
+  const gelir = thisMonth.filter(t => t.type === "gelir").reduce((s,t) => s+t.amount, 0);
+  const gider = thisMonth.filter(t => t.type === "gider").reduce((s,t) => s+t.amount, 0);
+  const balance = gelir - gider;
+  const byCat = {};
+  thisMonth.filter(t => t.type === "gider").forEach(t => { byCat[t.category] = (byCat[t.category]||0) + t.amount; });
+  if (gider > gelir * 0.8) suggestions.push({ type: "warning", icon: "⚠️", text: "Bu ay giderleriniz gelirinizin %80'ini aştı. Tasarruf planı oluşturun." });
+  if (byCat["yemek"] > gelir * 0.15) suggestions.push({ type: "tip", icon: "🍽️", text: `Yemek harcamaları (${fmt(byCat["yemek"])}) yüksek. Evde yemek yaparak tasarruf edebilirsiniz.` });
+  if (balance > 0) suggestions.push({ type: "positive", icon: "🎯", text: `Aylık ${fmt(balance)} fazlanızı yatırıma yönlendirin.` });
+  if (balance > 3000) suggestions.push({ type: "positive", icon: "📈", text: "Gelirinizin %10'unu acil fon için biriktirin." });
+  return suggestions;
+}
+
 function sheetRowToTx(t) {
   const id = t.id;
   return {
@@ -224,6 +249,9 @@ export default function FinansApp() {
   const [uberLoading, setUberLoading] = useState(false);
   const [showUberModal, setShowUberModal] = useState(false);
   const [uberResult, setUberResult] = useState(null);
+  const [uberImportIsUber, setUberImportIsUber] = useState(true);
+  const [showPdfUberChoice, setShowPdfUberChoice] = useState(false);
+  const [pendingPdfFile, setPendingPdfFile] = useState(null);
   const [pullingSheets, setPullingSheets] = useState(false);
   const fileRef = useRef();
   const uberFileRef = useRef();
@@ -343,20 +371,29 @@ export default function FinansApp() {
     reader.readAsDataURL(file);
   };
 
-  const handleUberPDF = async (e) => {
+  const pickPdfFile = (e) => {
     const file = e.target.files[0];
+    e.target.value = "";
     if (!file) return;
     const isPdf = (file.type || "").toLowerCase().includes("pdf") || /\.pdf$/i.test(file.name || "");
     if (!isPdf) {
       showNotif("Lütfen PDF seçin.", "#FF453A");
-      e.target.value = "";
       return;
     }
+    setPendingPdfFile(file);
+    setShowPdfUberChoice(true);
+  };
+
+  const startPdfParse = async (isUberWork) => {
+    const file = pendingPdfFile;
+    setShowPdfUberChoice(false);
+    setPendingPdfFile(null);
+    if (!file) return;
+    setUberImportIsUber(!!isUberWork);
     setUberLoading(true);
     setShowUberModal(true);
     setUberResult(null);
     try {
-      // 1) Yerel pdf.js — API anahtarı gerekmez, deterministik
       try {
         const local = await parseUberPdfWithPdfJs(file);
         const today = new Date().toISOString().split("T")[0];
@@ -365,16 +402,14 @@ export default function FinansApp() {
           expenses: local.expenses,
           total: local.total,
           period_start: local.period_start || today,
-          period_end: local.period_end || today
+          period_end: local.period_end || today,
         });
         setUberLoading(false);
-        e.target.value = "";
         return;
       } catch (localErr) {
         console.warn("pdf.js parse:", localErr?.message);
       }
 
-      // 2) Yedek: Gemini (API key varsa)
       const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
       if (!apiKey) throw new Error("Yerel okuma başarısız; VITE_GEMINI_API_KEY yok.");
 
@@ -448,21 +483,55 @@ Baska metin yok.` }
       setShowUberModal(false);
     }
     setUberLoading(false);
-    e.target.value = "";
   };
 
-    const confirmUberImport = (result) => {
+  const confirmUberImport = (result, isUber = true) => {
     const newTxs = [];
     const nowIso = new Date().toISOString();
-    if (result.earnings > 0) newTxs.push({ id: Date.now(), type: "gelir", category: "uber_gelir", amount: result.earnings, desc: `🚗 Uber Kazanç (${result.period_start} - ${result.period_end})`, date: result.period_end, isUber: true, createdAt: nowIso, updatedAt: nowIso, deleted: false });
-    if (result.expenses > 0) newTxs.push({ id: Date.now()+1, type: "gider", category: "uber_gider", amount: result.expenses, desc: `🚗 Uber Giderler (${result.period_start} - ${result.period_end})`, date: result.period_end, isUber: true, createdAt: nowIso, updatedAt: nowIso, deleted: false });
-    setTransactions(prev => [...newTxs, ...prev]);
-    setShowUberModal(false); setUberResult(null);
-    showNotif("Uber verisi içe aktarıldı! ✓");
+    const catGelir = isUber ? "uber_gelir" : "diger_gelir";
+    const catGider = isUber ? "uber_gider" : "diger_gider";
+    const tag = isUber ? "🚗 Uber" : "📄 PDF";
+    if (result.earnings > 0) {
+      newTxs.push({
+        id: Date.now(),
+        type: "gelir",
+        category: catGelir,
+        amount: result.earnings,
+        desc: `${tag} Kazanç (${result.period_start} - ${result.period_end})`,
+        date: result.period_end,
+        isUber,
+        createdAt: nowIso,
+        updatedAt: nowIso,
+        deleted: false,
+      });
+    }
+    if (result.expenses > 0) {
+      newTxs.push({
+        id: Date.now() + 1,
+        type: "gider",
+        category: catGider,
+        amount: result.expenses,
+        desc: `${tag} Giderler (${result.period_start} - ${result.period_end})`,
+        date: result.period_end,
+        isUber,
+        createdAt: nowIso,
+        updatedAt: nowIso,
+        deleted: false,
+      });
+    }
+    setTransactions((prev) => [...newTxs, ...prev]);
+    setShowUberModal(false);
+    setUberResult(null);
+    showNotif(isUber ? "Uber verisi içe aktarıldı! ✓" : "PDF verisi (özel) içe aktarıldı! ✓");
   };
 
   const activeTxList = transactions.filter((t) => !t.deleted);
-  const filteredTx = activeTxList.filter(t => { const d = new Date(t.date); return d.getMonth() === filterMonth && d.getFullYear() === filterYear; });
+  const filteredTx = activeTxList.filter((t) => {
+    const my = txMonthYear(t);
+    return my && my.month === filterMonth && my.year === filterYear;
+  });
+  const filteredPersonalTx = filteredTx.filter((t) => !t.isUber);
+  const filteredUberTx = filteredTx.filter((t) => t.isUber);
   const totalGelir = filteredTx.filter(t => t.type==="gelir").reduce((s,t) => s+t.amount, 0);
   const totalGider = filteredTx.filter(t => t.type==="gider").reduce((s,t) => s+t.amount, 0);
   const balance = totalGelir - totalGider;
@@ -470,7 +539,19 @@ Baska metin yok.` }
   const giderByCat = {}; filteredTx.filter(t => t.type==="gider").forEach(t => { const cat = getCat("gider",t.category); if (!giderByCat[t.category]) giderByCat[t.category] = { name:cat.label, value:0, color:cat.color, icon:cat.icon }; giderByCat[t.category].value += t.amount; });
   const gelirByCat = {}; filteredTx.filter(t => t.type==="gelir").forEach(t => { const cat = getCat("gelir",t.category); if (!gelirByCat[t.category]) gelirByCat[t.category] = { name:cat.label, value:0, color:cat.color, icon:cat.icon }; gelirByCat[t.category].value += t.amount; });
 
-  const monthlyData = Array.from({length:6},(_,i) => { const d = new Date(); d.setMonth(d.getMonth()-(5-i)); const m=d.getMonth(),y=d.getFullYear(); const txs=activeTxList.filter(t=>{const td=new Date(t.date);return td.getMonth()===m&&td.getFullYear()===y;}); return {name:MONTHS[m],Gelir:txs.filter(t=>t.type==="gelir").reduce((s,t)=>s+t.amount,0),Gider:txs.filter(t=>t.type==="gider").reduce((s,t)=>s+t.amount,0)}; });
+  const monthlyData = Array.from({ length: 6 }, (_, i) => {
+    const d = new Date();
+    d.setMonth(d.getMonth() - (5 - i));
+    const m = d.getMonth();
+    const y = d.getFullYear();
+    const txs = activeTxList.filter((t) => {
+      const my = txMonthYear(t);
+      return my && my.month === m && my.year === y;
+    });
+    const Gelir = txs.filter((t) => t.type === "gelir").reduce((s, t) => s + t.amount, 0);
+    const Gider = txs.filter((t) => t.type === "gider").reduce((s, t) => s + t.amount, 0);
+    return { name: MONTHS[m], monthIndex: m, year: y, Gelir, Gider, Net: Gelir - Gider };
+  });
 
   const suggestions = getAISuggestions(activeTxList);
   const pieGiderData = Object.values(giderByCat);
@@ -521,11 +602,11 @@ Baska metin yok.` }
         </div>
       </div>
 
-      {/* Tabs */}
-      <div style={{display:"flex",background:"#1C1C1E",padding:"0 16px",borderBottom:"1px solid #2C2C2E"}}>
-        {[{id:"dashboard",icon:"📊",label:"Özet"},{id:"transactions",icon:"📋",label:"İşlemler"},{id:"charts",icon:"📈",label:"Grafikler"},{id:"suggestions",icon:"🤖",label:"Öneriler"}].map(t=>(
-          <button key={t.id} onClick={()=>setTab(t.id)} style={{flex:1,background:"none",border:"none",color:tab===t.id?"#0A84FF":"#8E8E93",padding:"12px 0",fontSize:11,cursor:"pointer",fontWeight:tab===t.id?700:400,borderBottom:tab===t.id?"2px solid #0A84FF":"2px solid transparent",display:"flex",flexDirection:"column",alignItems:"center",gap:2}}>
-            <span style={{fontSize:18}}>{t.icon}</span>{t.label}
+      {/* Tabs: özet | özel hayat | uber | grafikler */}
+      <div style={{display:"flex",background:"#1C1C1E",padding:"0 8px",borderBottom:"1px solid #2C2C2E",overflowX:"auto"}}>
+        {[{id:"dashboard",icon:"📊",label:"Özet"},{id:"personal",icon:"👤",label:"Özel"},{id:"uber",icon:"🚗",label:"Uber"},{id:"charts",icon:"📈",label:"Grafik"},{id:"suggestions",icon:"🤖",label:"Öneri"}].map(t=>(
+          <button key={t.id} type="button" onClick={()=>setTab(t.id)} style={{flex:1,minWidth:56,background:"none",border:"none",color:tab===t.id?"#0A84FF":"#8E8E93",padding:"10px 2px",fontSize:10,cursor:"pointer",fontWeight:tab===t.id?700:400,borderBottom:tab===t.id?"2px solid #0A84FF":"2px solid transparent",display:"flex",flexDirection:"column",alignItems:"center",gap:2}}>
+            <span style={{fontSize:16}}>{t.icon}</span>{t.label}
           </button>
         ))}
       </div>
@@ -541,10 +622,36 @@ Baska metin yok.` }
                 <div key={i} style={{background:"#1C1C1E",borderRadius:16,padding:16}}>
                   <div style={{fontSize:11,color:"#8E8E93",marginBottom:8}}>{s.label}</div>
                   <div style={{fontSize:22,marginBottom:4}}>{s.value.icon}</div>
-                  <div style={{fontSize:13,fontWeight:600,marginBottom:2}}>{s.value.name}</div>
+                  <div style={{fontSize:13,fontWeight:600,marginBottom:2}}>{capitalizeWordsTr(s.value.name)}</div>
                   <div style={{fontSize:16,fontWeight:700,color:s.col}}>{fmt(s.value.value)}</div>
                 </div>
               ):null)}
+            </div>
+            <div style={{fontSize:17,fontWeight:700,marginBottom:10}}>Aylık özet (son 6 ay)</div>
+            <div style={{background:"#1C1C1E",borderRadius:14,overflow:"hidden",marginBottom:16,border:"1px solid #2C2C2E"}}>
+              <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
+                <thead>
+                  <tr style={{background:"#2C2C2E",color:"#8E8E93",fontSize:10,textAlign:"left"}}>
+                    <th style={{padding:"10px 8px",fontWeight:600}}>Ay</th>
+                    <th style={{padding:"10px 6px",fontWeight:600,color:"#34C759"}}>+ Gelir</th>
+                    <th style={{padding:"10px 6px",fontWeight:600,color:"#FF453A"}}>− Gider</th>
+                    <th style={{padding:"10px 8px",fontWeight:600}}>Net</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {monthlyData.map((row, idx) => {
+                    const sel = row.monthIndex === filterMonth && row.year === filterYear;
+                    return (
+                      <tr key={idx} style={{borderTop:"1px solid #2C2C2E",background:sel?"#0A84FF12":"transparent"}}>
+                        <td style={{padding:"10px 8px",fontWeight:600}}>{row.name} {String(row.year).slice(2)}</td>
+                        <td style={{padding:"10px 6px",color:"#34C759"}}>{fmt(row.Gelir)}</td>
+                        <td style={{padding:"10px 6px",color:"#FF453A"}}>{fmt(row.Gider)}</td>
+                        <td style={{padding:"10px 8px",fontWeight:700,color:row.Net>=0?"#34C759":"#FF453A"}}>{row.Net>=0?"+":""}{fmt(row.Net)}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
             <div style={{fontSize:17,fontWeight:700,marginBottom:12}}>Son İşlemler</div>
             {filteredTx.slice(0,5).map(tx=>{
@@ -555,9 +662,12 @@ Baska metin yok.` }
                   <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",marginBottom:4}}>
                     <span style={{fontSize:10,fontWeight:700,letterSpacing:0.3,padding:"2px 8px",borderRadius:6,background:tx.type==="gelir"?"#34C75928":"#FF453A28",color:tx.type==="gelir"?"#34C759":"#FF453A"}}>{txTypeLabel(tx)}</span>
                     {tx.isUber && <span style={{fontSize:10,background:"#E65100",borderRadius:6,padding:"2px 6px",fontWeight:700}}>Uber</span>}
-                    <span style={{fontSize:12,fontWeight:600,color:"#AEAEB2"}}>{cat.label}</span>
+                    <span style={{fontSize:12,fontWeight:600,color:"#AEAEB2",display:"inline-flex",alignItems:"center",gap:5}}>
+                      <span style={{fontWeight:800,color:tx.type==="gelir"?"#34C759":"#FF453A",fontSize:13}}>{tx.type==="gelir"?"+":"−"}</span>
+                      {capitalizeWordsTr(cat.label)}
+                    </span>
                   </div>
-                  <div style={{fontSize:14,fontWeight:600,lineHeight:1.35,display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical",overflow:"hidden",wordBreak:"break-word"}}>{tx.desc||cat.label}</div>
+                  <div style={{fontSize:14,fontWeight:600,lineHeight:1.35,display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical",overflow:"hidden",wordBreak:"break-word"}}>{capitalizeWordsTr(tx.desc||cat.label)}</div>
                   <div style={{fontSize:11,color:"#8E8E93",marginTop:4}}>{tx.date}</div>
                 </div>
                 <div style={{fontSize:15,fontWeight:700,color:tx.type==="gelir"?"#34C759":"#FF453A",flexShrink:0,textAlign:"right",minWidth:72}}>{tx.type==="gelir"?"+":"-"}{fmt(tx.amount)}</div>
@@ -567,20 +677,52 @@ Baska metin yok.` }
           </div>
         )}
 
-        {tab==="transactions" && (
+        {tab==="personal" && (
           <div>
-            {filteredTx.length===0 && <div style={{textAlign:"center",padding:40,color:"#8E8E93"}}><div style={{fontSize:40,marginBottom:12}}>📭</div><div>Bu ay işlem yok</div></div>}
-            {filteredTx.map(tx=>{
+            <div style={{fontSize:13,color:"#8E8E93",marginBottom:12,lineHeight:1.4}}>Özel hayat: Uber dışı gelir ve giderler ({MONTHS[filterMonth]} {filterYear})</div>
+            {filteredPersonalTx.length===0 && <div style={{textAlign:"center",padding:40,color:"#8E8E93"}}><div style={{fontSize:40,marginBottom:12}}>👤</div><div>Bu ay özel hayat işlemi yok</div></div>}
+            {filteredPersonalTx.map(tx=>{
               const cat=getCat(tx.type,tx.category);
               return <div key={tx.id} style={{background:"#1C1C1E",borderRadius:14,padding:14,marginBottom:8,display:"flex",alignItems:"flex-start",gap:12}}>
                 <div style={{width:46,height:46,borderRadius:14,background:cat.color+"22",display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,flexShrink:0,border:`1px solid ${cat.color}40`}}>{cat.icon}</div>
                 <div style={{flex:1,minWidth:0}}>
                   <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",marginBottom:4}}>
                     <span style={{fontSize:10,fontWeight:700,letterSpacing:0.3,padding:"2px 8px",borderRadius:6,background:tx.type==="gelir"?"#34C75928":"#FF453A28",color:tx.type==="gelir"?"#34C759":"#FF453A"}}>{txTypeLabel(tx)}</span>
-                    {tx.isUber && <span style={{fontSize:10,background:"#E65100",borderRadius:6,padding:"2px 6px",fontWeight:700}}>Uber</span>}
-                    <span style={{fontSize:12,fontWeight:600,color:"#AEAEB2"}}>{cat.label}</span>
+                    <span style={{fontSize:12,fontWeight:600,color:"#AEAEB2",display:"inline-flex",alignItems:"center",gap:5}}>
+                      <span style={{fontWeight:800,color:tx.type==="gelir"?"#34C759":"#FF453A",fontSize:14}} title={tx.type==="gelir"?"Gelir":"Gider"}>{tx.type==="gelir"?"+":"−"}</span>
+                      {capitalizeWordsTr(cat.label)}
+                    </span>
                   </div>
-                  <div style={{fontSize:15,fontWeight:600,lineHeight:1.35,display:"-webkit-box",WebkitLineClamp:3,WebkitBoxOrient:"vertical",overflow:"hidden",wordBreak:"break-word"}}>{tx.desc||cat.label}</div>
+                  <div style={{fontSize:15,fontWeight:600,lineHeight:1.35,display:"-webkit-box",WebkitLineClamp:3,WebkitBoxOrient:"vertical",overflow:"hidden",wordBreak:"break-word"}}>{capitalizeWordsTr(tx.desc||cat.label)}</div>
+                  <div style={{fontSize:11,color:"#8E8E93",marginTop:4}}>{tx.date}</div>
+                </div>
+                <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:6,flexShrink:0}}>
+                  <div style={{fontSize:16,fontWeight:700,color:tx.type==="gelir"?"#34C759":"#FF453A",textAlign:"right",minWidth:76}}>{tx.type==="gelir"?"+":"-"}{fmt(tx.amount)}</div>
+                  <button type="button" onClick={()=>setDeleteId(tx.id)} style={{background:"#FF453A20",border:"none",color:"#FF453A",borderRadius:8,padding:"3px 10px",fontSize:11,cursor:"pointer"}}>Sil</button>
+                </div>
+              </div>;
+            })}
+          </div>
+        )}
+
+        {tab==="uber" && (
+          <div>
+            <div style={{fontSize:13,color:"#8E8E93",marginBottom:12,lineHeight:1.4}}>Uber işi: haftalık ekstre ve işe bağlı kayıtlar ({MONTHS[filterMonth]} {filterYear})</div>
+            {filteredUberTx.length===0 && <div style={{textAlign:"center",padding:40,color:"#8E8E93"}}><div style={{fontSize:40,marginBottom:12}}>🚗</div><div>Bu ay Uber işlemi yok</div></div>}
+            {filteredUberTx.map(tx=>{
+              const cat=getCat(tx.type,tx.category);
+              return <div key={tx.id} style={{background:"#1C1C1E",borderRadius:14,padding:14,marginBottom:8,display:"flex",alignItems:"flex-start",gap:12,border:"1px solid #E6510030"}}>
+                <div style={{width:46,height:46,borderRadius:14,background:cat.color+"22",display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,flexShrink:0,border:`1px solid ${cat.color}40`}}>{cat.icon}</div>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",marginBottom:4}}>
+                    <span style={{fontSize:10,fontWeight:700,letterSpacing:0.3,padding:"2px 8px",borderRadius:6,background:tx.type==="gelir"?"#34C75928":"#FF453A28",color:tx.type==="gelir"?"#34C759":"#FF453A"}}>{txTypeLabel(tx)}</span>
+                    <span style={{fontSize:10,background:"#E65100",borderRadius:6,padding:"2px 6px",fontWeight:700}}>Uber</span>
+                    <span style={{fontSize:12,fontWeight:600,color:"#AEAEB2",display:"inline-flex",alignItems:"center",gap:5}}>
+                      <span style={{fontWeight:800,color:tx.type==="gelir"?"#34C759":"#FF453A",fontSize:14}}>{tx.type==="gelir"?"+":"−"}</span>
+                      {capitalizeWordsTr(cat.label)}
+                    </span>
+                  </div>
+                  <div style={{fontSize:15,fontWeight:600,lineHeight:1.35,display:"-webkit-box",WebkitLineClamp:3,WebkitBoxOrient:"vertical",overflow:"hidden",wordBreak:"break-word"}}>{capitalizeWordsTr(tx.desc||cat.label)}</div>
                   <div style={{fontSize:11,color:"#8E8E93",marginTop:4}}>{tx.date}</div>
                 </div>
                 <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:6,flexShrink:0}}>
@@ -618,7 +760,7 @@ Baska metin yok.` }
                     {pieGiderData.sort((a,b)=>b.value-a.value).slice(0,5).map((d,i)=>(
                       <div key={i} style={{display:"flex",alignItems:"center",gap:6,marginBottom:8}}>
                         <div style={{width:8,height:8,borderRadius:"50%",background:d.color,flexShrink:0}}/>
-                        <div style={{fontSize:11,flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{d.icon} {d.name}</div>
+                        <div style={{fontSize:11,flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{d.icon} {capitalizeWordsTr(d.name)}</div>
                         <div style={{fontSize:11,color:"#FF453A",fontWeight:600}}>{Math.round((d.value/totalGider)*100)}%</div>
                       </div>
                     ))}
@@ -637,7 +779,7 @@ Baska metin yok.` }
                     {pieGelirData.map((d,i)=>(
                       <div key={i} style={{display:"flex",alignItems:"center",gap:6,marginBottom:8}}>
                         <div style={{width:8,height:8,borderRadius:"50%",background:d.color,flexShrink:0}}/>
-                        <div style={{fontSize:12,flex:1}}>{d.icon} {d.name}</div>
+                        <div style={{fontSize:12,flex:1}}>{d.icon} {capitalizeWordsTr(d.name)}</div>
                         <div style={{fontSize:12,color:"#34C759",fontWeight:600}}>{fmt(d.value)}</div>
                       </div>
                     ))}
@@ -676,7 +818,7 @@ Baska metin yok.` }
 
       {/* FAB */}
       <div style={{position:"fixed",bottom:24,right:16,display:"flex",flexDirection:"column",gap:10,zIndex:100}}>
-        <input ref={uberFileRef} type="file" accept="application/pdf" onChange={handleUberPDF} onClick={e=>e.target.value=""} style={{display:"none"}}/>
+        <input ref={uberFileRef} type="file" accept="application/pdf" onChange={pickPdfFile} onClick={e=>e.target.value=""} style={{display:"none"}}/>
         <button onClick={()=>setResetStep(1)} style={{width:48,height:48,borderRadius:"50%",background:"#3A3A3C",border:"none",color:"#fff",fontSize:18,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>🗑️</button>
         <button onClick={()=>uberFileRef.current.click()} style={{width:48,height:48,borderRadius:"50%",background:"#E65100",border:"none",color:"#fff",fontSize:18,cursor:"pointer",boxShadow:"0 4px 20px rgba(230,81,0,0.4)",display:"flex",alignItems:"center",justifyContent:"center"}}>🚗</button>
         <button onClick={()=>openAdd("gelir")} style={{width:56,height:56,borderRadius:"50%",background:"#34C759",border:"none",color:"#fff",fontSize:26,cursor:"pointer",boxShadow:"0 4px 20px rgba(52,199,89,0.4)",display:"flex",alignItems:"center",justifyContent:"center"}}>+</button>
@@ -804,6 +946,21 @@ Baska metin yok.` }
         </div>
       )}
 
+      {/* PDF: Uber mi özel mi */}
+      {showPdfUberChoice && pendingPdfFile && (
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.85)",zIndex:2100,display:"flex",alignItems:"center",justifyContent:"center",padding:24,backdropFilter:"blur(10px)"}} onClick={(e)=>{if(e.target===e.currentTarget){setShowPdfUberChoice(false);setPendingPdfFile(null);}}}>
+          <div style={{background:"#1C1C1E",borderRadius:24,padding:28,width:"100%",maxWidth:360,border:"1px solid #3A3A3C"}} onClick={e=>e.stopPropagation()}>
+            <div style={{fontSize:18,fontWeight:800,marginBottom:8}}>PDF türü</div>
+            <div style={{fontSize:14,color:"#8E8E93",marginBottom:20,lineHeight:1.5}}>Bu PDF <strong style={{color:"#fff"}}>Uber haftalık ekstresi</strong> mi, yoksa <strong style={{color:"#fff"}}>özel hayat</strong> için mi? (İçe aktarılan satırlar buna göre işaretlenir.)</div>
+            <div style={{display:"flex",flexDirection:"column",gap:10}}>
+              <button type="button" onClick={()=>startPdfParse(true)} style={{width:"100%",background:"#E65100",border:"none",color:"#fff",borderRadius:14,padding:16,cursor:"pointer",fontWeight:700,fontSize:15}}>🚗 Evet, Uber işi (ekstre)</button>
+              <button type="button" onClick={()=>startPdfParse(false)} style={{width:"100%",background:"#2C2C2E",border:"1px solid #48484A",color:"#fff",borderRadius:14,padding:16,cursor:"pointer",fontWeight:600,fontSize:15}}>👤 Hayır, özel / diğer</button>
+              <button type="button" onClick={()=>{setShowPdfUberChoice(false);setPendingPdfFile(null);}} style={{width:"100%",background:"transparent",border:"none",color:"#8E8E93",padding:12,cursor:"pointer",fontSize:14}}>Vazgeç</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Uber Modal */}
       {showUberModal && (
         <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.85)",zIndex:2000,display:"flex",alignItems:"center",justifyContent:"center",padding:24,backdropFilter:"blur(10px)"}}>
@@ -812,12 +969,12 @@ Baska metin yok.` }
               <div style={{textAlign:"center",padding:20}}>
                 <div style={{fontSize:48,marginBottom:16}}>🚗</div>
                 <div style={{fontSize:18,fontWeight:700,marginBottom:8}}>PDF Okunuyor...</div>
-                <div style={{color:"#8E8E93",fontSize:14}}>Uber ekstreniz analiz ediliyor</div>
+                <div style={{color:"#8E8E93",fontSize:14}}>PDF metni okunuyor…</div>
               </div>
             ) : uberResult ? (
               <div>
-                <div style={{fontSize:20,fontWeight:800,marginBottom:4}}>🚗 Uber Ekstre Özeti</div>
-                <div style={{fontSize:13,color:"#8E8E93",marginBottom:20}}>{uberResult.period_start} → {uberResult.period_end}</div>
+                <div style={{fontSize:20,fontWeight:800,marginBottom:4}}>{uberImportIsUber ? "🚗 Uber Ekstre Özeti" : "📄 PDF Özeti (özel)"}</div>
+                <div style={{fontSize:13,color:"#8E8E93",marginBottom:20}}>{uberResult.period_start} → {uberResult.period_end}{uberImportIsUber ? "" : " · Özel hayat olarak kaydedilecek"}</div>
                 <div style={{display:"flex",flexDirection:"column",gap:12,marginBottom:24}}>
                   <div style={{background:"#34C75915",border:"1px solid #34C75930",borderRadius:14,padding:16,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                     <div style={{fontSize:12,color:"#8E8E93"}}>💚 NET KAZANÇ</div>
@@ -834,7 +991,7 @@ Baska metin yok.` }
                 </div>
                 <div style={{display:"flex",gap:12}}>
                   <button onClick={()=>{setShowUberModal(false);setUberResult(null);}} style={{flex:1,background:"#2C2C2E",border:"none",color:"#fff",borderRadius:12,padding:14,cursor:"pointer",fontWeight:600}}>İptal</button>
-                  <button onClick={()=>confirmUberImport(uberResult)} style={{flex:2,background:"#34C759",border:"none",color:"#fff",borderRadius:12,padding:14,cursor:"pointer",fontWeight:700,fontSize:15}}>✅ İçe Aktar</button>
+                  <button type="button" onClick={()=>confirmUberImport(uberResult, uberImportIsUber)} style={{flex:2,background:"#34C759",border:"none",color:"#fff",borderRadius:12,padding:14,cursor:"pointer",fontWeight:700,fontSize:15}}>✅ İçe Aktar</button>
                 </div>
               </div>
             ) : null}
