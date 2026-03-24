@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 
-const SHEETS_URL = "https://script.google.com/macros/s/AKfycbyPD0TbIhAFJq7Ta-zodSsNpPtWiA1QY2jdkwujI-9DqMLzmJcTSJdKuXr9v5kgMjakug/exec";
+const SHEETS_URL = "https://script.google.com/macros/s/AKfycbwTVwsJDkvfFW5lI27Zo3i7p_PfjnCiHkhH8u8ztuaIBVowPQc0D4pZWnXXKJCfkEtTIw/exec";
 
 const CATEGORIES = {
   gelir: [
@@ -31,7 +31,7 @@ const MONTHS = ["Oca","Şub","Mar","Nis","May","Haz","Tem","Ağu","Eyl","Eki","K
 const EMPTY_FORM = { type: "gider", category: "market", amount: "", desc: "", date: new Date().toISOString().split("T")[0], isUber: false };
 
 function fmt(n) {
-  return new Intl.NumberFormat("en-CA", { style: "currency", currency: "CAD", minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n || 0);
+  return new Intl.NumberFormat("en-CA", { style: "currency", currency: "CAD", maximumFractionDigits: 0 }).format(n || 0);
 }
 
 function getCat(type, id) {
@@ -48,19 +48,6 @@ function playBeep() {
     gain.gain.setValueAtTime(0.3, ctx.currentTime);
     gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
     osc.start(ctx.currentTime); osc.stop(ctx.currentTime + 0.3);
-  } catch(e) {}
-}
-
-function playClick() {
-  try {
-    const ctx = new (window.AudioContext || window.webkitAudioContext)();
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.connect(gain); gain.connect(ctx.destination);
-    osc.frequency.value = 680; osc.type = "triangle";
-    gain.gain.setValueAtTime(0.08, ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.06);
-    osc.start(ctx.currentTime); osc.stop(ctx.currentTime + 0.06);
   } catch(e) {}
 }
 
@@ -97,11 +84,8 @@ export default function FinansApp() {
   const [uberLoading, setUberLoading] = useState(false);
   const [showUberModal, setShowUberModal] = useState(false);
   const [uberResult, setUberResult] = useState(null);
-  const [markUberBusiness, setMarkUberBusiness] = useState(true);
   const fileRef = useRef();
   const uberFileRef = useRef();
-  const GEMINI_MODELS = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-flash-latest", "gemini-pro"];
-  const [resolvedGeminiModel, setResolvedGeminiModel] = useState(null);
 
   // Save to localStorage
   useEffect(() => {
@@ -111,212 +95,18 @@ export default function FinansApp() {
   // Sync to Sheets (debounced 1.5s)
   useEffect(() => {
     const t = setTimeout(() => {
-      const uberTransactions = transactions.filter(tx => tx.isUber);
-      const personalTransactions = transactions.filter(tx => !tx.isUber);
-      fetch(SHEETS_URL, {
-        method: "POST",
-        mode: "no-cors",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "sync",
-          transactions, // tum islemler
-          uberTransactions, // sadece uber isaretli islemler
-          personalTransactions, // uber disi kisel islemler
-          sheetTargets: {
-            all: "Tüm İşlemler",
-            uber: "Uber İşlemler",
-            personal: "İşlemler"
-          }
-        })
-      }).catch(() => {});
+      fetch(SHEETS_URL, { method: "POST", mode: "no-cors", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "sync", transactions }) }).catch(() => {});
     }, 1500);
     return () => clearTimeout(t);
   }, [transactions]);
 
   const showNotif = (msg, color = "#34C759") => { setNotification({ msg, color }); setTimeout(() => setNotification(null), 3000); };
 
-  const mergeTransactionsByUpdatedAt = (base, incoming) => {
-    const byId = {};
-    (base || []).forEach((t) => { if (t?.id !== undefined) byId[String(t.id)] = t; });
-    (incoming || []).forEach((t) => {
-      if (!t || t.id === undefined || t.id === null) return;
-      const id = String(t.id);
-      const prev = byId[id];
-      const prevTs = new Date(prev?.updatedAt || prev?.createdAt || 0).getTime();
-      const nextTs = new Date(t.updatedAt || t.createdAt || 0).getTime();
-      if (!prev || (!isNaN(nextTs) && nextTs >= prevTs)) byId[id] = t;
-    });
-    return Object.values(byId);
-  };
-
-  // Pull latest from Sheets so phone/chrome stay in sync
-  useEffect(() => {
-    const pull = async () => {
-      try {
-        const res = await fetch(`${SHEETS_URL}?action=pull&_ts=${Date.now()}`);
-        if (!res.ok) return;
-        const data = await res.json();
-        const remote = Array.isArray(data?.transactions) ? data.transactions : [];
-        setTransactions((prev) => mergeTransactionsByUpdatedAt(prev, remote));
-      } catch {}
-    };
-    pull();
-    const iv = setInterval(pull, 20000);
-    return () => clearInterval(iv);
-  }, []);
-
-  const parseUberDate = (day, mon, year) => {
-    const months = {
-      oca: 1, ocak: 1, jan: 1,
-      sub: 2, şub: 2, subat: 2, şubat: 2, feb: 2,
-      mar: 3,
-      nis: 4, nisan: 4, apr: 4,
-      may: 5,
-      haz: 6, haziran: 6, jun: 6,
-      tem: 7, temmuz: 7, jul: 7,
-      agu: 8, ağu: 8, agustos: 8, ağustos: 8, aug: 8,
-      eyl: 9, eylul: 9, eylül: 9, sep: 9,
-      eki: 10, ekim: 10, oct: 10,
-      kas: 11, kasim: 11, kasım: 11, nov: 11,
-      ara: 12, aralik: 12, aralık: 12, dec: 12
-    };
-    const key = String(mon || "").toLowerCase().trim();
-    const m = months[key];
-    const d = Number(day);
-    const y = Number(year);
-    if (!m || !d || !y) return "";
-    return `${String(y).padStart(4, "0")}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
-  };
-
-  const parseMoneyText = (raw) => {
-    if (!raw) return 0;
-    const str = String(raw).replace(/[^\d.,-]/g, "");
-    if (str.includes(".") && str.includes(",")) {
-      const lastDot = str.lastIndexOf(".");
-      const lastComma = str.lastIndexOf(",");
-      if (lastDot > lastComma) return parseFloat(str.replace(/,/g, "")) || 0; // 1,424.98
-      return parseFloat(str.replace(/\./g, "").replace(",", ".")) || 0; // 1.424,98
-    }
-    if (str.includes(",")) {
-      const parts = str.split(",");
-      if (parts[1] && parts[1].length === 3) return parseFloat(str.replace(/,/g, "")) || 0; // 1,424
-      return parseFloat(str.replace(",", ".")) || 0; // 424,98
-    }
-    return parseFloat(str) || 0;
-  };
-
-  const extractMoneyByLabel = (text, labelRegex) => {
-    const m = text.match(new RegExp(`${labelRegex}[\\s\\S]{0,60}?CA\\$\\s*([\\-\\d.,]+)`, "i"));
-    return m ? parseMoneyText(m[1]) : 0;
-  };
-
-  const parseUberSummaryFromText = (text) => {
-    const periodMatch = text.match(/(\d{1,2})\s+([A-Za-zÇĞİÖŞÜçğıöşü]{3,})\s+(\d{4})\s+\d{2}\s*-\s*(\d{1,2})\s+([A-Za-zÇĞİÖŞÜçğıöşü]{3,})\s+(\d{4})\s+\d{2}/i);
-    const period_start = periodMatch ? parseUberDate(periodMatch[1], periodMatch[2], periodMatch[3]) : "";
-    const period_end = periodMatch ? parseUberDate(periodMatch[4], periodMatch[5], periodMatch[6]) : "";
-
-    const earningsMain = extractMoneyByLabel(text, "Kazançlarınız(?!\\s*dökümü)");
-    const expenses = extractMoneyByLabel(text, "Para\\s+İadeleri\\s+ve\\s+Giderler(?!\\s*dökümü)");
-    const prevWeek = extractMoneyByLabel(text, "Önceki\\s+haftalardaki\\s+etkinlikler");
-    const payments = extractMoneyByLabel(text, "Ödemeler");
-
-    const earnings = Math.round((earningsMain + prevWeek) * 100) / 100;
-    const total = payments > 0 ? payments : Math.round((earnings + expenses) * 100) / 100;
-    return { earnings, expenses, total, period_start, period_end };
-  };
-
-  const parseUberPdfLocally = async (file) => {
-    const pdfjs = await import("https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.min.mjs");
-    if (pdfjs?.GlobalWorkerOptions) {
-      pdfjs.GlobalWorkerOptions.workerSrc = "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.worker.min.mjs";
-    }
-    const arrayBuffer = await file.arrayBuffer();
-    const pdf = await pdfjs.getDocument({ data: arrayBuffer }).promise;
-    const firstPage = await pdf.getPage(1);
-    const content = await firstPage.getTextContent();
-    const pageText = (content.items || []).map((i) => i.str || "").join("\n");
-    const parsed = parseUberSummaryFromText(pageText);
-    if (parsed.earnings <= 0) throw new Error("PDF yerel parser kazanç bulamadı");
-    return parsed;
-  };
-
-  const resolveGeminiModel = async (apiKey) => {
-    if (resolvedGeminiModel) return resolvedGeminiModel;
-
-    try {
-      const listRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
-      let listData = null;
-      try { listData = await listRes.json(); } catch {}
-
-      if (listRes.ok && Array.isArray(listData?.models)) {
-        const candidates = listData.models
-          .filter((m) => Array.isArray(m.supportedGenerationMethods) && m.supportedGenerationMethods.includes("generateContent"))
-          .map((m) => (m.name || "").replace(/^models\//, ""))
-          .filter(Boolean);
-
-        const preferred = candidates.find((m) => /flash/i.test(m)) || candidates[0];
-        if (preferred) {
-          setResolvedGeminiModel(preferred);
-          return preferred;
-        }
-      }
-    } catch {}
-
-    // Liste çekilemezse bilinen adları dene
-    const fallback = GEMINI_MODELS[0];
-    setResolvedGeminiModel(fallback);
-    return fallback;
-  };
-
-  const callGemini = async (parts, maxOutputTokens = 1000) => {
-    const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
-    if (!apiKey) throw new Error("API anahtarı bulunamadı (VITE_GEMINI_API_KEY).");
-
-    let lastError = "Bilinmeyen hata";
-    const preferredModel = await resolveGeminiModel(apiKey);
-    const modelsToTry = [preferredModel, ...GEMINI_MODELS.filter((m) => m !== preferredModel)];
-    for (const model of modelsToTry) {
-      try {
-        const res = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              contents: [{ parts }],
-              generationConfig: { temperature: 0, maxOutputTokens }
-            })
-          }
-        );
-
-        let data = null;
-        try { data = await res.json(); } catch {}
-        const apiErr = data?.error?.message || data?.error?.status || "";
-
-        if (!res.ok) {
-          lastError = apiErr || `Servis hatası (${res.status})`;
-          // Model bulunamazsa diğer adayları dene.
-          if (res.status === 404 || /not found|not supported/i.test(lastError)) continue;
-          throw new Error(lastError);
-        }
-
-        const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
-        if (!text) throw new Error("Model yanıtı boş döndü.");
-        if (resolvedGeminiModel !== model) setResolvedGeminiModel(model);
-        return text;
-      } catch (err) {
-        lastError = err?.message || lastError;
-      }
-    }
-    throw new Error(lastError);
-  };
-
   const handleAdd = () => {
     const amt = parseFloat(String(form.amount).replace(",",".").replace("$",""));
     if (isNaN(amt) || amt <= 0) { showNotif("Geçerli bir tutar girin!", "#FF453A"); return; }
     const isUber = form.isUber || form.category === "uber_gelir" || form.category === "uber_gider";
-    const nowIso = new Date().toISOString();
-    const newTx = { id: Date.now(), type: form.type, category: form.category, amount: amt, desc: form.desc || getCat(form.type, form.category).label, date: form.date, isUber, createdAt: nowIso, updatedAt: nowIso, deleted: false };
+    const newTx = { id: Date.now(), type: form.type, category: form.category, amount: amt, desc: form.desc || getCat(form.type, form.category).label, date: form.date, isUber };
     setTransactions(prev => [newTx, ...prev]);
     setShowModal(false);
     setReceiptPreview(null);
@@ -324,12 +114,7 @@ export default function FinansApp() {
     showNotif(`${form.type === "gelir" ? "💚 Gelir" : "🔴 Gider"} eklendi ✓`);
   };
 
-  const handleDelete = (id) => {
-    const nowIso = new Date().toISOString();
-    setTransactions(prev => prev.map(t => String(t.id) === String(id) ? { ...t, deleted: true, updatedAt: nowIso } : t));
-    setDeleteId(null);
-    showNotif("Silindi", "#FF453A");
-  };
+  const handleDelete = (id) => { setTransactions(prev => prev.filter(t => t.id !== id)); setDeleteId(null); showNotif("Silindi", "#FF453A"); };
 
   const handleReset = () => { setTransactions([]); try { localStorage.removeItem("butcem_v2"); } catch {} setResetStep(0); showNotif("Tüm veriler silindi!", "#FF453A"); };
 
@@ -343,15 +128,13 @@ export default function FinansApp() {
       setReceiptPreview(ev.target.result);
       setOcrLoading(true);
       try {
-        if (!import.meta.env.VITE_GEMINI_API_KEY) throw new Error("API anahtarı bulunamadı");
         const base64 = ev.target.result.split(",")[1];
-        const text = await callGemini(
-          [
-            { inline_data: { mime_type: mediaType, data: base64 } },
-            { text: `Fisteki toplam tutari bul. Sadece JSON yaz: {"amount":36.73,"desc":"Canadian Tire","category":"market","date":"2026-03-22"}\nKategori: market, yemek, faturalar, ulasim, saglik, eglence, giyim, egitim, kira, diger_gider\nBugun: ${new Date().toISOString().split("T")[0]}\nSADECE JSON, baska hicbir sey yazma.` }
-          ],
-          1000
-        );
+        const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${import.meta.env.VITE_GEMINI_API_KEY}`, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ contents: [{ parts: [{ inline_data: { mime_type: mediaType, data: base64 } }, { text: `Fisteki toplam tutari bul. Sadece JSON yaz: {"amount":36.73,"desc":"Canadian Tire","category":"market","date":"2026-03-22"}\nKategori: market, yemek, faturalar, ulasim, saglik, eglence, giyim, egitim, kira, diger_gider\nBugun: ${new Date().toISOString().split("T")[0]}\nSADECE JSON, baska hicbir sey yazma.` }] }], generationConfig: { temperature: 0, maxOutputTokens: 1000 } })
+        });
+        const data = await res.json();
+        const text = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
         const start = text.indexOf("{"); const end = text.lastIndexOf("}");
         if (start === -1) throw new Error("JSON yok");
         const parsed = JSON.parse(text.substring(start, end+1));
@@ -359,9 +142,7 @@ export default function FinansApp() {
         setForm(f => ({ ...f, type: "gider", amount: String(parsed.amount), desc: parsed.desc || "", category: parsed.category || "diger_gider", date: parsed.date || f.date }));
         playBeep();
         showNotif("✅ Fiş okundu! Kontrol et ve ekle.");
-      } catch (err) {
-        showNotif("Fiş okunamadı: " + (err?.message || "Bilinmeyen hata"), "#FF9F0A");
-      }
+      } catch { showNotif("Fiş okunamadı, manuel gir", "#FF9F0A"); }
       setOcrLoading(false);
     };
     reader.readAsDataURL(file);
@@ -369,37 +150,8 @@ export default function FinansApp() {
 
   const handleUberPDF = async (e) => {
     const file = e.target.files[0]; if (!file) return;
-    const isPdf = (file.type || "").toLowerCase().includes("pdf") || /\.pdf$/i.test(file.name || "");
-    if (!isPdf) {
-      showNotif("Lütfen PDF dosyası seçin.", "#FF453A");
-      e.target.value = "";
-      return;
-    }
-    if (!import.meta.env.VITE_GEMINI_API_KEY) {
-      showNotif("API anahtarı bulunamadı (VITE_GEMINI_API_KEY).", "#FF453A");
-      e.target.value = "";
-      return;
-    }
-    setUberLoading(true); setShowUberModal(true); setUberResult(null); setMarkUberBusiness(true);
+    setUberLoading(true); setShowUberModal(true); setUberResult(null);
     try {
-      // 1) Önce lokal/kararlı parser dene (AI'dan bağımsız).
-      try {
-        const localParsed = await parseUberPdfLocally(file);
-        const today = new Date().toISOString().split("T")[0];
-        setUberResult({
-          earnings: localParsed.earnings,
-          expenses: localParsed.expenses,
-          total: localParsed.total,
-          period_start: localParsed.period_start || today,
-          period_end: localParsed.period_end || today
-        });
-        setUberLoading(false);
-        e.target.value = "";
-        return;
-      } catch (localErr) {
-        console.warn("Yerel PDF parse başarısız, AI fallback:", localErr?.message);
-      }
-
       const arrayBuffer = await file.arrayBuffer();
       const bytes = new Uint8Array(arrayBuffer);
       // Chunk chunk base64'e çevir
@@ -409,45 +161,40 @@ export default function FinansApp() {
       }
       const base64 = btoa(binary);
 
-      const rawText = await callGemini(
-        [
-          { inline_data: { mime_type: "application/pdf", data: base64 } },
-          { text: `Uber haftalik ekstre PDF'sinin sadece "Haftalik Ozet" kismini oku.
-Sadece su formatta cevap ver (tek tek satir):
-KAZANCLAR:945.95
-ONCEKI_HAFTA:4.92
-GIDERLER:66.27
-ODEMELER:1017.14
-DONEM_BASLANGIC:2026-03-16
-DONEM_BITIS:2026-03-23
-
-Kurallar:
-- KAZANCLAR = "Kazançlarınız" satiri
-- ONCEKI_HAFTA = "Önceki haftalardaki etkinlikler" satiri (yoksa 0)
-- GIDERLER = "Para İadeleri ve Giderler" satiri
-- ODEMELER = "Ödemeler" satiri
-- Tarihleri haftalik donem satirindan al (YYYY-MM-DD)
-- SADECE bu 6 satir, baska metin yazma.` }
-        ],
-        350
+      const res = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${import.meta.env.VITE_GEMINI_API_KEY}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            contents: [{ parts: [
+              { inline_data: { mime_type: "application/pdf", data: base64 } },
+              { text: `Uber ekstre PDF. Her satira bir deger yaz:
+KAZANC:945.95
+ONCEKI:4.92
+GIDER:66.27
+TOPLAM:1017.14
+BASLANGIC:2026-03-16
+BITIS:2026-03-23
+Sadece bu formatta yaz, baska hicbir sey ekleme.` }
+            ]}],
+            generationConfig: { temperature: 0, maxOutputTokens: 500 }
+          })
+        }
       );
-      if (!rawText) throw new Error("PDF metni okunamadı");
+      const data = await res.json();
+      console.log("Gemini response:", JSON.stringify(data).substring(0, 300));
+      const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
       const text = rawText.replace(/```json/gi, "").replace(/```/g, "").trim();
       console.log("Temiz text:", text.substring(0, 200));
       
       // Sayıları çek - virgüllü format da dahil (1.424,98 veya 1424.98)
       const parseNum = (str) => {
         if (!str) return 0;
-        str = str.trim().replace(/[^\d.,-]/g, "");
+        str = str.trim();
         // Eğer hem nokta hem virgül varsa: 1.424,98 formatı (Türkçe)
         if (str.includes(".") && str.includes(",")) {
-          // Sağdaki ayıracı ondalık kabul et; diğerini binlik gibi temizle.
-          const lastDot = str.lastIndexOf(".");
-          const lastComma = str.lastIndexOf(",");
-          if (lastDot > lastComma) {
-            return parseFloat(str.replace(/,/g, "")) || 0; // 1,424.98
-          }
-          return parseFloat(str.replace(/\./g, "").replace(",", ".")) || 0; // 1.424,98
+          return parseFloat(str.replace(/\./g, "").replace(",", ".")) || 0;
         }
         // Sadece virgül varsa: 1424,98 -> 1424.98
         if (str.includes(",")) {
@@ -461,114 +208,42 @@ Kurallar:
         return parseFloat(str) || 0;
       };
 
-      const earnMainMatch = text.match(/(?:KAZANCLAR|KAZANÇLAR|KAZANC|KAZANÇ|EARNINGS)\s*[:=]\s*([-\d.,]+)/i);
-      const prevWeekMatch = text.match(/(?:ONCEKI_HAFTA|ÖNCEKI_HAFTA|ÖNCEKİ_HAFTA|ONCEKI|ÖNCEKİ|PREVIOUS)\s*[:=]\s*([-\d.,]+)/i);
-      const expensesMatch = text.match(/(?:GIDERLER|GİDERLER|GIDER|GİDER|EXPENSES|DEDUCTIONS)\s*[:=]\s*([-\d.,]+)/i);
-      const paymentsMatch = text.match(/(?:ODEMELER|ÖDEMELER|ODEME|ÖDEME|PAYMENTS|TOTAL)\s*[:=]\s*([-\d.,]+)/i);
-      const startMatch = text.match(/(?:DONEM_BASLANGIC|DÖNEM_BAŞLANGIÇ|BASLANGIC|BAŞLANGIÇ|PERIOD_START)\s*[:=]\s*(\d{4}-\d{2}-\d{2})/i);
-      const endMatch = text.match(/(?:DONEM_BITIS|DÖNEM_BİTİŞ|BITIS|BİTİŞ|PERIOD_END)\s*[:=]\s*(\d{4}-\d{2}-\d{2})/i);
+      const earningsMatch = text.match(/KAZANC:([\d.,]+)/i);
+      const prevMatch = text.match(/ONCEKI:([\d.,]+)/i);
+      const expensesMatch = text.match(/GIDER:([\d.,]+)/i);
+      const totalMatch = text.match(/TOPLAM:([\d.,]+)/i);
+      const startMatch = text.match(/BASLANGIC:(\d{4}-\d{2}-\d{2})/i);
+      const endMatch = text.match(/BITIS:(\d{4}-\d{2}-\d{2})/i);
 
-      const mainEarnings = earnMainMatch ? parseNum(earnMainMatch[1]) : 0;
-      const prevWeek = prevWeekMatch ? parseNum(prevWeekMatch[1]) : 0;
-      let earnings = Math.round((mainEarnings + prevWeek) * 100) / 100;
-      let expenses = expensesMatch ? parseNum(expensesMatch[1]) : 0;
-      let total = paymentsMatch ? parseNum(paymentsMatch[1]) : 0;
-
-      // Fallbacks: model bir satırı kaçırırsa ödeme ilişkisiyle toparla.
-      if (total <= 0 && earnings > 0) total = Math.round((earnings + Math.max(0, expenses)) * 100) / 100;
-      if (earnings <= 0 && total > 0) earnings = Math.max(0, Math.round((total - Math.max(0, expenses)) * 100) / 100);
-      if (expenses <= 0 && total > 0 && earnings > 0) expenses = Math.max(0, Math.round((total - earnings) * 100) / 100);
-      // Uber özet mantığı: Ödemeler = Kazançlar + ÖncekiHafta + Giderler
-      if (expenses <= 0 && total > 0 && mainEarnings > 0) {
-        expenses = Math.max(0, Math.round((total - mainEarnings - Math.max(0, prevWeek)) * 100) / 100);
-      }
-
-      // Hala gider yoksa ayrı bir çağrıyla sadece "Para İadeleri ve Giderler" satırını zorla çek.
-      if (expenses <= 0) {
-        const expenseRaw = await callGemini(
-          [
-            { inline_data: { mime_type: "application/pdf", data: base64 } },
-            { text: `Uber haftalik ekstre PDF'sinde sadece "Para İadeleri ve Giderler" satirindaki tutari bul.
-Sadece su formatta cevap ver:
-GIDERLER:66.27
-Not: Yukaridaki satir haftalik ozetin ilk sayfasinda geciyor.` }
-          ],
-          120
-        );
-        const expenseText = String(expenseRaw || "").replace(/```/g, "").trim();
-        const forceExpenseMatch = expenseText.match(/(?:GIDERLER|GİDERLER|GIDER|GİDER)\s*[:=]\s*([-\d.,]+)/i);
-        if (forceExpenseMatch) expenses = parseNum(forceExpenseMatch[1]);
-      }
-
-      // Ödemeler de eksik kalırsa ayrı doğrulama çağrısı.
-      if (total <= 0) {
-        const paymentRaw = await callGemini(
-          [
-            { inline_data: { mime_type: "application/pdf", data: base64 } },
-            { text: `Uber haftalik ekstre PDF'sinde sadece "Ödemeler" satirindaki tutari bul.
-Sadece su formatta cevap ver:
-ODEMELER:1017.14` }
-          ],
-          120
-        );
-        const paymentText = String(paymentRaw || "").replace(/```/g, "").trim();
-        const forcePaymentMatch = paymentText.match(/(?:ODEMELER|ÖDEMELER|ODEME|ÖDEME)\s*[:=]\s*([-\d.,]+)/i);
-        if (forcePaymentMatch) total = parseNum(forcePaymentMatch[1]);
-      }
-
-      // Son güvenlik: gider hala 0 ise ama total > earnings ise aradaki farkı gider kabul et.
-      if (expenses <= 0 && total > earnings) {
-        expenses = Math.max(0, Math.round((total - earnings) * 100) / 100);
-      }
-
-      let period_start = startMatch ? startMatch[1] : "";
-      let period_end = endMatch ? endMatch[1] : "";
-
-      if (!period_start || !period_end) {
-        const dateOnlyRaw = await callGemini(
-          [
-            { inline_data: { mime_type: "application/pdf", data: base64 } },
-            { text: `Uber PDF'de yazan haftalik donem tarih araligini bul.
-Sadece bu formatta cevap ver:
-BASLANGIC:2026-03-16
-BITIS:2026-03-23` }
-          ],
-          120
-        );
-        const dateOnlyText = String(dateOnlyRaw || "").replace(/```/g, "").trim();
-        const s = dateOnlyText.match(/BASLANGIC\s*:\s*(\d{4}-\d{2}-\d{2})/i);
-        const en = dateOnlyText.match(/BITIS\s*:\s*(\d{4}-\d{2}-\d{2})/i);
-        if (!period_start && s) period_start = s[1];
-        if (!period_end && en) period_end = en[1];
-      }
-      if (!period_start) period_start = new Date().toISOString().split("T")[0];
-      if (!period_end) period_end = new Date().toISOString().split("T")[0];
+      const earningsBase = earningsMatch ? parseNum(earningsMatch[1]) : 0;
+      const prevWeeks = prevMatch ? parseNum(prevMatch[1]) : 0;
+      const earnings = Math.round((earningsBase + prevWeeks) * 100) / 100;
+      const expenses = expensesMatch ? parseNum(expensesMatch[1]) : 0;
+      const total = totalMatch ? parseNum(totalMatch[1]) : earnings + expenses;
+      const period_start = startMatch ? startMatch[1] : new Date().toISOString().split("T")[0];
+      const period_end = endMatch ? endMatch[1] : new Date().toISOString().split("T")[0];
 
       console.log("Parsed:", { earnings, expenses, total, period_start, period_end });
-      if (earnings === 0 && expenses === 0) throw new Error("Kazanç/Gider bulunamadı");
+      if (earnings === 0) throw new Error("Kazanç bulunamadı");
       setUberResult({ earnings, expenses, total, period_start, period_end });
     } catch(err) {
       console.error("PDF hatası:", err.message);
-      showNotif("PDF yüklenemedi: " + (err?.message || "Bilinmeyen hata"), "#FF453A");
+      showNotif("PDF okunamadı: " + err.message, "#FF453A");
       setShowUberModal(false);
     }
     setUberLoading(false);
-    e.target.value = "";
   };
 
-  const confirmUberImport = (result) => {
+    const confirmUberImport = (result) => {
     const newTxs = [];
-    const uberFlag = !!markUberBusiness;
-    const nowIso = new Date().toISOString();
-    if (result.earnings > 0) newTxs.push({ id: Date.now(), type: "gelir", category: "uber_gelir", amount: result.earnings, desc: `🚗 Uber Kazanç (${result.period_start} - ${result.period_end})`, date: result.period_end, isUber: uberFlag, createdAt: nowIso, updatedAt: nowIso, deleted: false });
-    if (result.expenses > 0) newTxs.push({ id: Date.now()+1, type: "gider", category: "uber_gider", amount: result.expenses, desc: `🚗 Uber Giderler (${result.period_start} - ${result.period_end})`, date: result.period_end, isUber: uberFlag, createdAt: nowIso, updatedAt: nowIso, deleted: false });
+    if (result.earnings > 0) newTxs.push({ id: Date.now(), type: "gelir", category: "uber_gelir", amount: result.earnings, desc: `🚗 Uber Kazanç (${result.period_start} - ${result.period_end})`, date: result.period_end, isUber: true });
+    if (result.expenses > 0) newTxs.push({ id: Date.now()+1, type: "gider", category: "uber_gider", amount: result.expenses, desc: `🚗 Uber Giderler (${result.period_start} - ${result.period_end})`, date: result.period_end, isUber: true });
     setTransactions(prev => [...newTxs, ...prev]);
-    setShowUberModal(false); setUberResult(null); setMarkUberBusiness(true);
+    setShowUberModal(false); setUberResult(null);
     showNotif("Uber verisi içe aktarıldı! ✓");
   };
 
-  const activeTransactions = transactions.filter(t => !t.deleted);
-  const filteredTx = activeTransactions.filter(t => { const d = new Date(t.date); return d.getMonth() === filterMonth && d.getFullYear() === filterYear; });
+  const filteredTx = transactions.filter(t => { const d = new Date(t.date); return d.getMonth() === filterMonth && d.getFullYear() === filterYear; });
   const totalGelir = filteredTx.filter(t => t.type==="gelir").reduce((s,t) => s+t.amount, 0);
   const totalGider = filteredTx.filter(t => t.type==="gider").reduce((s,t) => s+t.amount, 0);
   const balance = totalGelir - totalGider;
@@ -576,22 +251,16 @@ BITIS:2026-03-23` }
   const giderByCat = {}; filteredTx.filter(t => t.type==="gider").forEach(t => { const cat = getCat("gider",t.category); if (!giderByCat[t.category]) giderByCat[t.category] = { name:cat.label, value:0, color:cat.color, icon:cat.icon }; giderByCat[t.category].value += t.amount; });
   const gelirByCat = {}; filteredTx.filter(t => t.type==="gelir").forEach(t => { const cat = getCat("gelir",t.category); if (!gelirByCat[t.category]) gelirByCat[t.category] = { name:cat.label, value:0, color:cat.color, icon:cat.icon }; gelirByCat[t.category].value += t.amount; });
 
-  const monthlyData = Array.from({length:6},(_,i) => { const d = new Date(); d.setMonth(d.getMonth()-(5-i)); const m=d.getMonth(),y=d.getFullYear(); const txs=activeTransactions.filter(t=>{const td=new Date(t.date);return td.getMonth()===m&&td.getFullYear()===y;}); return {name:MONTHS[m],Gelir:txs.filter(t=>t.type==="gelir").reduce((s,t)=>s+t.amount,0),Gider:txs.filter(t=>t.type==="gider").reduce((s,t)=>s+t.amount,0)}; });
+  const monthlyData = Array.from({length:6},(_,i) => { const d = new Date(); d.setMonth(d.getMonth()-(5-i)); const m=d.getMonth(),y=d.getFullYear(); const txs=transactions.filter(t=>{const td=new Date(t.date);return td.getMonth()===m&&td.getFullYear()===y;}); return {name:MONTHS[m],Gelir:txs.filter(t=>t.type==="gelir").reduce((s,t)=>s+t.amount,0),Gider:txs.filter(t=>t.type==="gider").reduce((s,t)=>s+t.amount,0)}; });
 
-  const suggestions = getAISuggestions(activeTransactions);
+  const suggestions = getAISuggestions(transactions);
   const pieGiderData = Object.values(giderByCat);
   const pieGelirData = Object.values(gelirByCat);
 
   const openAdd = (type) => { setForm({...EMPTY_FORM, type, category: type==="gelir"?"maas":"market"}); setReceiptPreview(null); setShowModal(true); };
 
   return (
-    <div
-      onClickCapture={(e) => {
-        const btn = e.target?.closest?.("button");
-        if (btn && !btn.disabled) playClick();
-      }}
-      style={{minHeight:"100vh",background:"#000",color:"#fff",fontFamily:"'SF Pro Display',-apple-system,sans-serif",maxWidth:430,margin:"0 auto",position:"relative"}}
-    >
+    <div style={{minHeight:"100vh",background:"#000",color:"#fff",fontFamily:"'SF Pro Display',-apple-system,sans-serif",maxWidth:430,margin:"0 auto",position:"relative"}}>
 
       {notification && <div style={{position:"fixed",top:60,left:"50%",transform:"translateX(-50%)",background:notification.color,color:"#fff",padding:"10px 24px",borderRadius:20,fontSize:14,fontWeight:600,zIndex:9999,boxShadow:"0 4px 20px rgba(0,0,0,0.4)",whiteSpace:"nowrap"}}>{notification.msg}</div>}
 
@@ -644,7 +313,7 @@ BITIS:2026-03-23` }
 
         {tab==="dashboard" && (
           <div>
-            {activeTransactions.length===0 && <div style={{textAlign:"center",padding:40,color:"#8E8E93"}}><div style={{fontSize:48,marginBottom:12}}>💰</div><div style={{fontSize:18,fontWeight:700,marginBottom:8,color:"#fff"}}>Henüz işlem yok</div><div>Sağ alttaki + butonuyla başla!</div></div>}
+            {transactions.length===0 && <div style={{textAlign:"center",padding:40,color:"#8E8E93"}}><div style={{fontSize:48,marginBottom:12}}>💰</div><div style={{fontSize:18,fontWeight:700,marginBottom:8,color:"#fff"}}>Henüz işlem yok</div><div>Sağ alttaki + butonuyla başla!</div></div>}
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:16}}>
               {[{label:"En Büyük Gider",value:Object.values(giderByCat).sort((a,b)=>b.value-a.value)[0],col:"#FF453A"},{label:"En Büyük Gelir",value:Object.values(gelirByCat).sort((a,b)=>b.value-a.value)[0],col:"#34C759"}].map((s,i)=>s.value?(
                 <div key={i} style={{background:"#1C1C1E",borderRadius:16,padding:16}}>
@@ -803,7 +472,7 @@ BITIS:2026-03-23` }
             {/* Receipt */}
             <div style={{marginBottom:16}}>
               <div style={{fontSize:13,color:"#8E8E93",marginBottom:8}}>📷 Fiş Yükle (AI ile Otomatik Oku)</div>
-              <input ref={fileRef} type="file" accept="image/*" capture="environment" onChange={handleReceiptUpload} onClick={e=>e.target.value=""} style={{display:"none"}}/>
+              <input ref={fileRef} type="file" accept="image/*" onChange={handleReceiptUpload} onClick={e=>e.target.value=""} style={{display:"none"}}/>
               <button onClick={()=>fileRef.current.click()} style={{width:"100%",background:"#2C2C2E",border:"2px dashed #3A3A3C",borderRadius:14,color:"#0A84FF",padding:16,cursor:"pointer",fontSize:14,fontWeight:600}}>
                 {ocrLoading?"⏳ Fiş Okunuyor...":"📸 Fiş Fotoğrafı Çek veya Seç"}
               </button>
@@ -931,19 +600,8 @@ BITIS:2026-03-23` }
                     <div style={{fontSize:22,fontWeight:800,color:"#0A84FF"}}>{fmt(uberResult.total)}</div>
                   </div>
                 </div>
-                <label style={{display:"flex",alignItems:"center",gap:10,background:markUberBusiness?"#E6510022":"#2C2C2E",border:markUberBusiness?"1px solid #E65100AA":"1px solid #3A3A3C",borderRadius:12,padding:"10px 12px",marginBottom:16,cursor:"pointer"}}>
-                  <input
-                    type="checkbox"
-                    checked={markUberBusiness}
-                    onChange={e=>setMarkUberBusiness(e.target.checked)}
-                    style={{width:16,height:16}}
-                  />
-                  <span style={{fontSize:13,color:"#E5E5EA"}}>
-                    Vergi icin Uber islemi olarak isaretle (Sheet'te ayri listelemek icin)
-                  </span>
-                </label>
                 <div style={{display:"flex",gap:12}}>
-                  <button onClick={()=>{setShowUberModal(false);setUberResult(null);setMarkUberBusiness(true);}} style={{flex:1,background:"#2C2C2E",border:"none",color:"#fff",borderRadius:12,padding:14,cursor:"pointer",fontWeight:600}}>İptal</button>
+                  <button onClick={()=>{setShowUberModal(false);setUberResult(null);}} style={{flex:1,background:"#2C2C2E",border:"none",color:"#fff",borderRadius:12,padding:14,cursor:"pointer",fontWeight:600}}>İptal</button>
                   <button onClick={()=>confirmUberImport(uberResult)} style={{flex:2,background:"#34C759",border:"none",color:"#fff",borderRadius:12,padding:14,cursor:"pointer",fontWeight:700,fontSize:15}}>✅ İçe Aktar</button>
                 </div>
               </div>
