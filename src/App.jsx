@@ -265,19 +265,24 @@ export default function FinansApp() {
       const rawText = await callGemini(
         [
           { inline_data: { mime_type: "application/pdf", data: base64 } },
-          { text: `Uber ekstre PDF'yi analiz et ve SADECE JSON dondur.
-Format:
-{"earnings":882.40,"expenses":363.19,"total":1245.59,"period_start":"2026-03-18","period_end":"2026-03-24"}
+          { text: `Uber haftalik ekstre PDF'sinin sadece "Haftalik Ozet" kismini oku.
+Sadece su formatta cevap ver (tek tek satir):
+KAZANCLAR:945.95
+ONCEKI_HAFTA:4.92
+GIDERLER:66.27
+ODEMELER:1017.14
+DONEM_BASLANGIC:2026-03-16
+DONEM_BITIS:2026-03-23
 
 Kurallar:
-- earnings = NET KAZANC (surucuye kalan net odeme).
-- expenses = tum kesintiler/giderler toplami (service fee, tax, insurance, toll, adjustment dahil).
-- total = earnings + expenses (brut/toplam islem hacmi).
-- Tarihleri PDF'deki donem araligindan bul ve YYYY-MM-DD yaz.
-- Tum sayilar ondalikli (2 basamakli) olsun.
-- SADECE JSON, baska metin yazma.` }
+- KAZANCLAR = "Kazançlarınız" satiri
+- ONCEKI_HAFTA = "Önceki haftalardaki etkinlikler" satiri (yoksa 0)
+- GIDERLER = "Para İadeleri ve Giderler" satiri
+- ODEMELER = "Ödemeler" satiri
+- Tarihleri haftalik donem satirindan al (YYYY-MM-DD)
+- SADECE bu 6 satir, baska metin yazma.` }
         ],
-        500
+        350
       );
       if (!rawText) throw new Error("PDF metni okunamadı");
       const text = rawText.replace(/```json/gi, "").replace(/```/g, "").trim();
@@ -309,88 +314,32 @@ Kurallar:
         return parseFloat(str) || 0;
       };
 
-      const start = text.indexOf("{");
-      const end = text.lastIndexOf("}");
-      let parsedJson = null;
-      if (start !== -1 && end > start) {
-        try { parsedJson = JSON.parse(text.slice(start, end + 1)); } catch {}
-      }
-      const pickNum = (obj, keys) => {
-        if (!obj || typeof obj !== "object") return 0;
-        for (const k of keys) {
-          if (obj[k] !== undefined && obj[k] !== null && String(obj[k]).trim() !== "") {
-            const v = parseNum(String(obj[k]));
-            if (!Number.isNaN(v)) return v;
-          }
-        }
-        return 0;
-      };
-      const pickDate = (obj, keys) => {
-        if (!obj || typeof obj !== "object") return "";
-        for (const k of keys) {
-          const val = obj[k];
-          if (!val) continue;
-          const s = String(val).trim();
-          if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
-        }
-        return "";
-      };
+      const earnMainMatch = text.match(/(?:KAZANCLAR|KAZANÇLAR|KAZANC|KAZANÇ|EARNINGS)\s*[:=]\s*([-\d.,]+)/i);
+      const prevWeekMatch = text.match(/(?:ONCEKI_HAFTA|ÖNCEKI_HAFTA|ÖNCEKİ_HAFTA|ONCEKI|ÖNCEKİ|PREVIOUS)\s*[:=]\s*([-\d.,]+)/i);
+      const expensesMatch = text.match(/(?:GIDERLER|GİDERLER|GIDER|GİDER|EXPENSES|DEDUCTIONS)\s*[:=]\s*([-\d.,]+)/i);
+      const paymentsMatch = text.match(/(?:ODEMELER|ÖDEMELER|ODEME|ÖDEME|PAYMENTS|TOTAL)\s*[:=]\s*([-\d.,]+)/i);
+      const startMatch = text.match(/(?:DONEM_BASLANGIC|DÖNEM_BAŞLANGIÇ|BASLANGIC|BAŞLANGIÇ|PERIOD_START)\s*[:=]\s*(\d{4}-\d{2}-\d{2})/i);
+      const endMatch = text.match(/(?:DONEM_BITIS|DÖNEM_BİTİŞ|BITIS|BİTİŞ|PERIOD_END)\s*[:=]\s*(\d{4}-\d{2}-\d{2})/i);
 
-      const earningsMatch = text.match(/(?:KAZANC|KAZANÇ|NET[_\s-]?KAZANC|NET[_\s-]?KAZANÇ|EARNINGS|NET)\s*[:=]\s*([-\d.,]+)/i);
-      const expensesMatch = text.match(/(?:GIDER|GİDER|GIDERLER|GİDERLER|MASRAF|MASRAFLAR|KESINTI|KESİNTİ|KESINTILER|KESİNTİLER|EXPENSE|EXPENSES|DEDUCTIONS|FEES)\s*[:=]\s*([-\d.,]+)/i);
-      const totalMatch = text.match(/(?:TOPLAM|TOTAL|BRUT|BRÜT|GROSS)\s*[:=]\s*([-\d.,]+)/i);
-      const startMatch = text.match(/(?:BASLANGIC|BAŞLANGIÇ|PERIOD_START|START)\s*[:=]\s*(\d{4}-\d{2}-\d{2})/i);
-      const endMatch = text.match(/(?:BITIS|BİTİŞ|PERIOD_END|END)\s*[:=]\s*(\d{4}-\d{2}-\d{2})/i);
+      const mainEarnings = earnMainMatch ? parseNum(earnMainMatch[1]) : 0;
+      const prevWeek = prevWeekMatch ? parseNum(prevWeekMatch[1]) : 0;
+      let earnings = Math.round((mainEarnings + prevWeek) * 100) / 100;
+      let expenses = expensesMatch ? parseNum(expensesMatch[1]) : 0;
+      let total = paymentsMatch ? parseNum(paymentsMatch[1]) : 0;
 
-      let earnings = parsedJson
-        ? pickNum(parsedJson, ["earnings", "earning", "net_earnings", "netEarnings", "net", "kazanc", "kazanC", "net_kazanc"])
-        : (earningsMatch ? parseNum(earningsMatch[1]) : 0);
-      let expenses = parsedJson
-        ? pickNum(parsedJson, ["expenses", "expense", "gider", "giderler", "deductions", "fees", "total_expenses"])
-        : (expensesMatch ? parseNum(expensesMatch[1]) : 0);
-      let total = parsedJson
-        ? pickNum(parsedJson, ["total", "gross", "toplam", "brut", "brüt"])
-        : (totalMatch ? parseNum(totalMatch[1]) : earnings + expenses);
-      // Bazı ekstrelere kazanç ayrı gelmeyebilir; toplam-giderden türet.
-      if (earnings <= 0 && total > 0) {
-        earnings = Math.max(0, Math.round((total - expenses) * 100) / 100);
-      }
-      // Bazı ekstrelere gider ayrı gelmeyebilir; toplam-kazançtan türet.
-      if (expenses <= 0 && total > 0 && earnings > 0) {
-        expenses = Math.max(0, Math.round((total - earnings) * 100) / 100);
-      }
-      // Hala 0 ise aynı PDF'den sadece gider/kesinti toplamını tekrar iste.
-      if (expenses <= 0) {
-        const expenseOnlyRaw = await callGemini(
-          [
-            { inline_data: { mime_type: "application/pdf", data: base64 } },
-            { text: `Uber ekstre PDF icin SADECE toplam gider/kesinti tutarini bul.
-Sadece su formatta cevap ver:
-GIDER:66.27
+      // Fallbacks: model bir satırı kaçırırsa ödeme ilişkisiyle toparla.
+      if (total <= 0 && earnings > 0) total = Math.round((earnings + Math.max(0, expenses)) * 100) / 100;
+      if (earnings <= 0 && total > 0) earnings = Math.max(0, Math.round((total - Math.max(0, expenses)) * 100) / 100);
+      if (expenses <= 0 && total > 0 && earnings > 0) expenses = Math.max(0, Math.round((total - earnings) * 100) / 100);
 
-Gidere dahil et: Uber fee, service fee, booking fee, tax, insurance, toll, adjustments ve diger kesintiler.
-Eger hic kesinti yoksa GIDER:0 yaz.` }
-          ],
-          200
-        );
-        const expenseOnlyText = String(expenseOnlyRaw || "").replace(/```/g, "").trim();
-        const expenseOnlyMatch = expenseOnlyText.match(/(?:GIDER|GİDER|EXPENSE|EXPENSES|DEDUCTIONS|FEES)\s*:\s*([-\d.,]+)/i);
-        if (expenseOnlyMatch) {
-          const parsedExpense = parseNum(expenseOnlyMatch[1]);
-          if (parsedExpense > 0) expenses = parsedExpense;
-        }
-      }
-      // Total alanını her zaman earnings + expenses ile tutarlı hale getir.
-      total = Math.round((Math.max(0, earnings) + Math.max(0, expenses)) * 100) / 100;
-
-      let period_start = pickDate(parsedJson, ["period_start", "start_date", "start", "baslangic", "başlangıç"]) || (startMatch ? startMatch[1] : "");
-      let period_end = pickDate(parsedJson, ["period_end", "end_date", "end", "bitis", "bitiş"]) || (endMatch ? endMatch[1] : "");
+      let period_start = startMatch ? startMatch[1] : "";
+      let period_end = endMatch ? endMatch[1] : "";
 
       if (!period_start || !period_end) {
         const dateOnlyRaw = await callGemini(
           [
             { inline_data: { mime_type: "application/pdf", data: base64 } },
-            { text: `Uber PDF donem tarih araligini bul.
+            { text: `Uber PDF'de yazan haftalik donem tarih araligini bul.
 Sadece bu formatta cevap ver:
 BASLANGIC:2026-03-16
 BITIS:2026-03-23` }
@@ -407,9 +356,6 @@ BITIS:2026-03-23` }
       if (!period_end) period_end = new Date().toISOString().split("T")[0];
 
       console.log("Parsed:", { earnings, expenses, total, period_start, period_end });
-      if (earnings === 0 && total > 0) {
-        earnings = Math.max(0, Math.round((total - expenses) * 100) / 100);
-      }
       if (earnings === 0 && expenses === 0) throw new Error("Kazanç/Gider bulunamadı");
       setUberResult({ earnings, expenses, total, period_start, period_end });
     } catch(err) {
