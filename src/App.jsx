@@ -289,7 +289,13 @@ Kurallar:
         str = str.trim().replace(/[^\d.,-]/g, "");
         // Eğer hem nokta hem virgül varsa: 1.424,98 formatı (Türkçe)
         if (str.includes(".") && str.includes(",")) {
-          return parseFloat(str.replace(/\./g, "").replace(",", ".")) || 0;
+          // Sağdaki ayıracı ondalık kabul et; diğerini binlik gibi temizle.
+          const lastDot = str.lastIndexOf(".");
+          const lastComma = str.lastIndexOf(",");
+          if (lastDot > lastComma) {
+            return parseFloat(str.replace(/,/g, "")) || 0; // 1,424.98
+          }
+          return parseFloat(str.replace(/\./g, "").replace(",", ".")) || 0; // 1.424,98
         }
         // Sadece virgül varsa: 1424,98 -> 1424.98
         if (str.includes(",")) {
@@ -309,6 +315,26 @@ Kurallar:
       if (start !== -1 && end > start) {
         try { parsedJson = JSON.parse(text.slice(start, end + 1)); } catch {}
       }
+      const pickNum = (obj, keys) => {
+        if (!obj || typeof obj !== "object") return 0;
+        for (const k of keys) {
+          if (obj[k] !== undefined && obj[k] !== null && String(obj[k]).trim() !== "") {
+            const v = parseNum(String(obj[k]));
+            if (!Number.isNaN(v)) return v;
+          }
+        }
+        return 0;
+      };
+      const pickDate = (obj, keys) => {
+        if (!obj || typeof obj !== "object") return "";
+        for (const k of keys) {
+          const val = obj[k];
+          if (!val) continue;
+          const s = String(val).trim();
+          if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+        }
+        return "";
+      };
 
       const earningsMatch = text.match(/(?:KAZANC|KAZANÇ|NET[_\s-]?KAZANC|NET[_\s-]?KAZANÇ|EARNINGS|NET)\s*[:=]\s*([-\d.,]+)/i);
       const expensesMatch = text.match(/(?:GIDER|GİDER|GIDERLER|GİDERLER|MASRAF|MASRAFLAR|KESINTI|KESİNTİ|KESINTILER|KESİNTİLER|EXPENSE|EXPENSES|DEDUCTIONS|FEES)\s*[:=]\s*([-\d.,]+)/i);
@@ -316,9 +342,15 @@ Kurallar:
       const startMatch = text.match(/(?:BASLANGIC|BAŞLANGIÇ|PERIOD_START|START)\s*[:=]\s*(\d{4}-\d{2}-\d{2})/i);
       const endMatch = text.match(/(?:BITIS|BİTİŞ|PERIOD_END|END)\s*[:=]\s*(\d{4}-\d{2}-\d{2})/i);
 
-      let earnings = parsedJson ? parseNum(String(parsedJson.earnings ?? "")) : (earningsMatch ? parseNum(earningsMatch[1]) : 0);
-      let expenses = parsedJson ? parseNum(String(parsedJson.expenses ?? "")) : (expensesMatch ? parseNum(expensesMatch[1]) : 0);
-      let total = parsedJson ? parseNum(String(parsedJson.total ?? "")) : (totalMatch ? parseNum(totalMatch[1]) : earnings + expenses);
+      let earnings = parsedJson
+        ? pickNum(parsedJson, ["earnings", "earning", "net_earnings", "netEarnings", "net", "kazanc", "kazanC", "net_kazanc"])
+        : (earningsMatch ? parseNum(earningsMatch[1]) : 0);
+      let expenses = parsedJson
+        ? pickNum(parsedJson, ["expenses", "expense", "gider", "giderler", "deductions", "fees", "total_expenses"])
+        : (expensesMatch ? parseNum(expensesMatch[1]) : 0);
+      let total = parsedJson
+        ? pickNum(parsedJson, ["total", "gross", "toplam", "brut", "brüt"])
+        : (totalMatch ? parseNum(totalMatch[1]) : earnings + expenses);
       // Bazı ekstrelere kazanç ayrı gelmeyebilir; toplam-giderden türet.
       if (earnings <= 0 && total > 0) {
         earnings = Math.max(0, Math.round((total - expenses) * 100) / 100);
@@ -351,8 +383,8 @@ Eger hic kesinti yoksa GIDER:0 yaz.` }
       // Total alanını her zaman earnings + expenses ile tutarlı hale getir.
       total = Math.round((Math.max(0, earnings) + Math.max(0, expenses)) * 100) / 100;
 
-      let period_start = parsedJson?.period_start || (startMatch ? startMatch[1] : "");
-      let period_end = parsedJson?.period_end || (endMatch ? endMatch[1] : "");
+      let period_start = pickDate(parsedJson, ["period_start", "start_date", "start", "baslangic", "başlangıç"]) || (startMatch ? startMatch[1] : "");
+      let period_end = pickDate(parsedJson, ["period_end", "end_date", "end", "bitis", "bitiş"]) || (endMatch ? endMatch[1] : "");
 
       if (!period_start || !period_end) {
         const dateOnlyRaw = await callGemini(
@@ -375,7 +407,10 @@ BITIS:2026-03-23` }
       if (!period_end) period_end = new Date().toISOString().split("T")[0];
 
       console.log("Parsed:", { earnings, expenses, total, period_start, period_end });
-      if (earnings === 0) throw new Error("Kazanç bulunamadı");
+      if (earnings === 0 && total > 0) {
+        earnings = Math.max(0, Math.round((total - expenses) * 100) / 100);
+      }
+      if (earnings === 0 && expenses === 0) throw new Error("Kazanç/Gider bulunamadı");
       setUberResult({ earnings, expenses, total, period_start, period_end });
     } catch(err) {
       console.error("PDF hatası:", err.message);
