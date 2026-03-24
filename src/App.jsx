@@ -169,17 +169,14 @@ export default function FinansApp() {
           body: JSON.stringify({
             contents: [{ parts: [
               { inline_data: { mime_type: "application/pdf", data: base64 } },
-              { text: `Bu Uber haftalik ekstre. Su degerleri bul ve tam olarak yaz (kusuratli):
-- Kazanclariniz tutari
-- Onceki haftalardaki etkinlikler tutari (yoksa 0)
-- Para Iadeleri ve Giderler tutari
-- Odemeler tutari
-- Donem baslangic ve bitis tarihleri
-
-Format (baska hicbir sey yazma):
-E:945.95 P:4.92 G:66.27 T:1017.14 S:2026-03-16 B:2026-03-23
-
-E=Kazanclariniz, P=Onceki haftalar, G=Para Iadeleri ve Giderler, T=Odemeler, S=baslangic, B=bitis` }
+              { text: `Uber ekstre PDF. Her satira bir deger yaz:
+KAZANC:945.95
+ONCEKI:4.92
+GIDER:66.27
+TOPLAM:1017.14
+BASLANGIC:2026-03-16
+BITIS:2026-03-23
+Sadece bu formatta yaz, baska hicbir sey ekleme.` }
             ]}],
             generationConfig: { temperature: 0, maxOutputTokens: 500 }
           })
@@ -211,12 +208,12 @@ E=Kazanclariniz, P=Onceki haftalar, G=Para Iadeleri ve Giderler, T=Odemeler, S=b
         return parseFloat(str) || 0;
       };
 
-      const earningsMatch = text.match(/E:([\d.,]+)/);
-      const prevMatch = text.match(/P:([\d.,]+)/);
-      const expensesMatch = text.match(/G:([\d.,]+)/);
-      const totalMatch = text.match(/T:([\d.,]+)/);
-      const startMatch = text.match(/S:(\d{4}-\d{2}-\d{2})/);
-      const endMatch = text.match(/B:(\d{4}-\d{2}-\d{2})/);
+      const earningsMatch = text.match(/KAZANC:([\d.,]+)/i);
+      const prevMatch = text.match(/ONCEKI:([\d.,]+)/i);
+      const expensesMatch = text.match(/GIDER:([\d.,]+)/i);
+      const totalMatch = text.match(/TOPLAM:([\d.,]+)/i);
+      const startMatch = text.match(/BASLANGIC:(\d{4}-\d{2}-\d{2})/i);
+      const endMatch = text.match(/BITIS:(\d{4}-\d{2}-\d{2})/i);
 
       const earningsBase = earningsMatch ? parseNum(earningsMatch[1]) : 0;
       const prevWeeks = prevMatch ? parseNum(prevMatch[1]) : 0;
