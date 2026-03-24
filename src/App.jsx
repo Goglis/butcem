@@ -99,6 +99,7 @@ export default function FinansApp() {
   const [uberResult, setUberResult] = useState(null);
   const fileRef = useRef();
   const uberFileRef = useRef();
+  const GEMINI_MODELS = ["gemini-2.0-flash", "gemini-1.5-flash"];
 
   // Save to localStorage
   useEffect(() => {
@@ -114,6 +115,46 @@ export default function FinansApp() {
   }, [transactions]);
 
   const showNotif = (msg, color = "#34C759") => { setNotification({ msg, color }); setTimeout(() => setNotification(null), 3000); };
+
+  const callGemini = async (parts, maxOutputTokens = 1000) => {
+    const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+    if (!apiKey) throw new Error("API anahtarı bulunamadı (VITE_GEMINI_API_KEY).");
+
+    let lastError = "Bilinmeyen hata";
+    for (const model of GEMINI_MODELS) {
+      try {
+        const res = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              contents: [{ parts }],
+              generationConfig: { temperature: 0, maxOutputTokens }
+            })
+          }
+        );
+
+        let data = null;
+        try { data = await res.json(); } catch {}
+        const apiErr = data?.error?.message || data?.error?.status || "";
+
+        if (!res.ok) {
+          lastError = apiErr || `Servis hatası (${res.status})`;
+          // 404 model bulunamadı ise bir sonraki modeli dene.
+          if (res.status === 404) continue;
+          throw new Error(lastError);
+        }
+
+        const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+        if (!text) throw new Error("Model yanıtı boş döndü.");
+        return text;
+      } catch (err) {
+        lastError = err?.message || lastError;
+      }
+    }
+    throw new Error(lastError);
+  };
 
   const handleAdd = () => {
     const amt = parseFloat(String(form.amount).replace(",",".").replace("$",""));
@@ -141,13 +182,15 @@ export default function FinansApp() {
       setReceiptPreview(ev.target.result);
       setOcrLoading(true);
       try {
+        if (!import.meta.env.VITE_GEMINI_API_KEY) throw new Error("API anahtarı bulunamadı");
         const base64 = ev.target.result.split(",")[1];
-        const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${import.meta.env.VITE_GEMINI_API_KEY}`, {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ contents: [{ parts: [{ inline_data: { mime_type: mediaType, data: base64 } }, { text: `Fisteki toplam tutari bul. Sadece JSON yaz: {"amount":36.73,"desc":"Canadian Tire","category":"market","date":"2026-03-22"}\nKategori: market, yemek, faturalar, ulasim, saglik, eglence, giyim, egitim, kira, diger_gider\nBugun: ${new Date().toISOString().split("T")[0]}\nSADECE JSON, baska hicbir sey yazma.` }] }], generationConfig: { temperature: 0, maxOutputTokens: 1000 } })
-        });
-        const data = await res.json();
-        const text = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+        const text = await callGemini(
+          [
+            { inline_data: { mime_type: mediaType, data: base64 } },
+            { text: `Fisteki toplam tutari bul. Sadece JSON yaz: {"amount":36.73,"desc":"Canadian Tire","category":"market","date":"2026-03-22"}\nKategori: market, yemek, faturalar, ulasim, saglik, eglence, giyim, egitim, kira, diger_gider\nBugun: ${new Date().toISOString().split("T")[0]}\nSADECE JSON, baska hicbir sey yazma.` }
+          ],
+          1000
+        );
         const start = text.indexOf("{"); const end = text.lastIndexOf("}");
         if (start === -1) throw new Error("JSON yok");
         const parsed = JSON.parse(text.substring(start, end+1));
@@ -155,7 +198,9 @@ export default function FinansApp() {
         setForm(f => ({ ...f, type: "gider", amount: String(parsed.amount), desc: parsed.desc || "", category: parsed.category || "diger_gider", date: parsed.date || f.date }));
         playBeep();
         showNotif("✅ Fiş okundu! Kontrol et ve ekle.");
-      } catch { showNotif("Fiş okunamadı, manuel gir", "#FF9F0A"); }
+      } catch (err) {
+        showNotif("Fiş okunamadı: " + (err?.message || "Bilinmeyen hata"), "#FF9F0A");
+      }
       setOcrLoading(false);
     };
     reader.readAsDataURL(file);
@@ -185,15 +230,10 @@ export default function FinansApp() {
       }
       const base64 = btoa(binary);
 
-      const res = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${import.meta.env.VITE_GEMINI_API_KEY}`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            contents: [{ parts: [
-              { inline_data: { mime_type: "application/pdf", data: base64 } },
-              { text: `Uber ekstre PDF. Her satira bir deger yaz:
+      const rawText = await callGemini(
+        [
+          { inline_data: { mime_type: "application/pdf", data: base64 } },
+          { text: `Uber ekstre PDF. Her satira bir deger yaz:
 KAZANC:945.95
 ONCEKI:4.92
 GIDER:66.27
@@ -201,17 +241,9 @@ TOPLAM:1017.14
 BASLANGIC:2026-03-16
 BITIS:2026-03-23
 Sadece bu formatta yaz, baska hicbir sey ekleme.` }
-            ]}],
-            generationConfig: { temperature: 0, maxOutputTokens: 500 }
-          })
-        }
+        ],
+        500
       );
-      if (!res.ok) {
-        throw new Error(`Servis hatası (${res.status})`);
-      }
-      const data = await res.json();
-      console.log("Gemini response:", JSON.stringify(data).substring(0, 300));
-      const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
       if (!rawText) throw new Error("PDF metni okunamadı");
       const text = rawText.replace(/```json/gi, "").replace(/```/g, "").trim();
       console.log("Temiz text:", text.substring(0, 200));
