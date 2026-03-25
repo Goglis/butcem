@@ -159,6 +159,48 @@ function parseUberStatementPlainText(text) {
   const flat = raw.replace(/[\t ]+/g, " ").trim();
   const oneLine = raw.replace(/\s+/g, " ").trim();
 
+  // Turkce Uber ozet satirlari:
+  // Kazanclariniz / Para iadeleri ve Giderler / Onceki haftalardaki etkinlikler / Odemeler
+  const trEarn = oneLine.match(/Kazan[çc]lar[ıi]n[ıi]z[^\d]{0,120}CA\$?\s*([\d.,]+)/i);
+  const trExp = oneLine.match(/Para\s+iadeleri\s+ve\s+Giderler[^\d]{0,120}CA\$?\s*([\d.,]+)/i);
+  const trPrev = oneLine.match(/[ÖO]nceki\s+haftalardaki\s+etkinlikler[^\d]{0,140}CA\$?\s*([\d.,]+)/i);
+  const trPay = oneLine.match(/[ÖO]demeler[^\d]{0,120}CA\$?\s*([\d.,]+)/i);
+  if (trEarn || trExp || trPay) {
+    const trEarnings = parseNum(trEarn?.[1] || 0) + parseNum(trPrev?.[1] || 0);
+    const trExpenses = parseNum(trExp?.[1] || 0);
+    let trTotal = parseNum(trPay?.[1] || 0);
+
+    // "16 Mar 2026 04 - 23 Mar 2026 00" formati
+    let period_start = "";
+    let period_end = "";
+    const trRange = oneLine.match(
+      /(\d{1,2})\s+([A-Za-zÇĞİÖŞÜçğıöşü]{3,})\s+(\d{4})\s+\d{2}\s*[-–]\s*(\d{1,2})\s+([A-Za-zÇĞİÖŞÜçğıöşü]{3,})\s+(\d{4})\s+\d{2}/
+    );
+    if (trRange) {
+      const mon = {
+        jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12,
+        oca: 1, sub: 2, mar: 3, nis: 4, may: 5, haz: 6, tem: 7, agu: 8, eyl: 9, eki: 10, kas: 11, ara: 12,
+      };
+      const m1 = mon[(trRange[2] || "").toLocaleLowerCase("tr-TR").replace("ş", "s").replace("ğ", "g").replace("ü", "u").replace("ı", "i").replace("ö", "o").replace("ç", "c").slice(0, 3)];
+      const m2 = mon[(trRange[5] || "").toLocaleLowerCase("tr-TR").replace("ş", "s").replace("ğ", "g").replace("ü", "u").replace("ı", "i").replace("ö", "o").replace("ç", "c").slice(0, 3)];
+      if (m1 && m2) {
+        period_start = `${trRange[3]}-${String(m1).padStart(2, "0")}-${String(trRange[1]).padStart(2, "0")}`;
+        period_end = `${trRange[6]}-${String(m2).padStart(2, "0")}-${String(trRange[4]).padStart(2, "0")}`;
+      }
+    }
+    if (!period_end) period_end = new Date().toISOString().split("T")[0];
+    if (!period_start) period_start = period_end;
+    if (!trTotal && (trEarnings || trExpenses)) trTotal = Math.round((trEarnings + trExpenses) * 100) / 100;
+
+    return {
+      earnings: Math.round(trEarnings * 100) / 100,
+      expenses: Math.round(trExpenses * 100) / 100,
+      total: Math.round(trTotal * 100) / 100,
+      period_start,
+      period_end,
+    };
+  }
+
   const k = oneLine.match(/KAZANC:\s*([\d.,]+)/i);
   const o = oneLine.match(/ONCEKI:\s*([\d.,]+)/i);
   const g = oneLine.match(/GIDER:\s*([\d.,]+)/i);
