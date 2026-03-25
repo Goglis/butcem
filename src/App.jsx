@@ -75,20 +75,53 @@ async function extractPdfTextFromBuffer(arrayBuffer) {
   return full;
 }
 
-/** Uber ekstre PDF metninden kazanç / gider (İngilizce, Fransızca; eski KAZANC: satırları) */
-function parseUberStatementPlainText(text) {
-  const flat = text
-    .replace(/\u00a0/g, " ")
-    .replace(/\r\n/g, "\n")
-    .replace(/[\t ]+/g, " ")
-    .trim();
+/** PDF.js metni bazen kelimeyi böler; tek satır + anahtar kelime yakınında tutar ara */
+function uberMoneyInWindow(haystack, startIdx, winLen) {
+  const w = haystack.slice(startIdx, startIdx + winLen);
+  const tries = [
+    /-\s*\$?\s*([\d]{1,3}(?:[.,]\d{3})*(?:[.,]\d{2}))/,
+    /\$\s*-\s*([\d]{1,3}(?:[.,]\d{3})*(?:[.,]\d{2}))/,
+    /(?:CAD|USD)\s*\$?\s*([\d]{1,3}(?:[.,]\d{3})*(?:[.,]\d{2}))/i,
+    /\$?\s*([\d]{1,3}(?:[.,]\d{3})*(?:[.,]\d{2}))/,
+    /\b([\d]{1,3}(?:[.,]\d{3})*(?:\.\d{2}))\b/,
+  ];
+  for (const re of tries) {
+    const m = w.match(re);
+    if (m && m[1]) {
+      const v = Math.abs(parseNum(m[1]));
+      if (v > 0 && v < 1e7) return v;
+    }
+  }
+  return null;
+}
 
-  const k = flat.match(/KAZANC:\s*([\d.,]+)/i);
-  const o = flat.match(/ONCEKI:\s*([\d.,]+)/i);
-  const g = flat.match(/GIDER:\s*([\d.,]+)/i);
-  const totM = flat.match(/TOPLAM:\s*([\d.,]+)/i);
-  const bs = flat.match(/BASLANGIC:(\d{4}-\d{2}-\d{2})/i);
-  const be = flat.match(/BITIS:(\d{4}-\d{2}-\d{2})/i);
+function uberFindAfterKeywords(haystack, keywords, window = 160) {
+  const lower = haystack.toLowerCase();
+  for (const kw of keywords) {
+    const k = kw.toLowerCase();
+    let from = 0;
+    let idx;
+    while ((idx = lower.indexOf(k, from)) >= 0) {
+      const v = uberMoneyInWindow(haystack, idx, window);
+      if (v != null) return v;
+      from = idx + k.length;
+    }
+  }
+  return 0;
+}
+
+/** Uber ekstre PDF metninden kazanç / gider (EN/FR; PDF düzeni kırık olsa da) */
+function parseUberStatementPlainText(text) {
+  const raw = text.replace(/\u00a0/g, " ");
+  const flat = raw.replace(/[\t ]+/g, " ").trim();
+  const oneLine = raw.replace(/\s+/g, " ").trim();
+
+  const k = oneLine.match(/KAZANC:\s*([\d.,]+)/i);
+  const o = oneLine.match(/ONCEKI:\s*([\d.,]+)/i);
+  const g = oneLine.match(/GIDER:\s*([\d.,]+)/i);
+  const totM = oneLine.match(/TOPLAM:\s*([\d.,]+)/i);
+  const bs = oneLine.match(/BASLANGIC:(\d{4}-\d{2}-\d{2})/i);
+  const be = oneLine.match(/BITIS:(\d{4}-\d{2}-\d{2})/i);
   if (k || g || totM) {
     let earnings = (k ? parseNum(k[1]) : 0) + (o ? parseNum(o[1]) : 0);
     const expenses = g ? parseNum(g[1]) : 0;
@@ -102,31 +135,48 @@ function parseUberStatementPlainText(text) {
     return { earnings, expenses, total, period_start, period_end };
   }
 
+  const hay = oneLine;
+  const hayLo = hay.toLowerCase();
+
   let earnings = 0;
   const earnPatterns = [
-    /Your\s+earnings[^\d]{0,40}\$\s*([\d.,]+)/i,
-    /Your\s+earnings\s+([\d.,]+)/i,
-    /Trip\s+earnings[^\d]{0,60}\$\s*([\d.,]+)/i,
-    /\bEarnings\b[^\d$]{0,50}\$\s*([\d.,]+)/i,
-    /Vos\s+revenus[^\d]{0,50}\$\s*([\d.,]+)/i,
-    /Vos\s+gains[^\d]{0,50}\$\s*([\d.,]+)/i,
+    /your\s+earnings[^\d]{0,120}?\$?\s*([\d]{1,3}(?:[.,]\d{3})*(?:[.,]\d{2}))/i,
+    /total\s+earnings[^\d]{0,120}?\$?\s*([\d]{1,3}(?:[.,]\d{3})*(?:[.,]\d{2}))/i,
+    /net\s+earnings[^\d]{0,120}?\$?\s*([\d]{1,3}(?:[.,]\d{3})*(?:[.,]\d{2}))/i,
+    /trip\s+earnings[^\d]{0,120}?\$?\s*([\d]{1,3}(?:[.,]\d{3})*(?:[.,]\d{2}))/i,
+    /gross\s+earnings[^\d]{0,120}?\$?\s*([\d]{1,3}(?:[.,]\d{3})*(?:[.,]\d{2}))/i,
+    /\bearnings\b[^\d$]{0,80}?\$?\s*([\d]{1,3}(?:[.,]\d{3})*(?:[.,]\d{2}))/i,
+    /vos\s+revenus[^\d]{0,120}?\$?\s*([\d]{1,3}(?:[.,]\d{3})*(?:[.,]\d{2}))/i,
+    /revenus\s+totaux[^\d]{0,120}?\$?\s*([\d]{1,3}(?:[.,]\d{3})*(?:[.,]\d{2}))/i,
   ];
   for (const re of earnPatterns) {
-    const m = flat.match(re);
+    const m = hay.match(re);
     if (m) {
       earnings = parseNum(m[1]);
       break;
     }
   }
+  if (!earnings) {
+    earnings = uberFindAfterKeywords(hay, [
+      "your earnings",
+      "total earnings",
+      "net earnings",
+      "trip earnings",
+      "earnings this week",
+      "weekly earnings",
+    ]);
+  }
 
   let prev = 0;
   const prevPatterns = [
-    /Previous\s+weeks?'?\s+unpaid\s+earnings[^\d]{0,50}\$\s*([\d.,]+)/i,
-    /Previous\s+weeks?'?\s+earnings[^\d]{0,50}\$\s*([\d.,]+)/i,
-    /from\s+prior\s+weeks?[^\d]{0,60}\$\s*([\d.,]+)/i,
+    /previous\s+weeks?'?\s+unpaid\s+earnings[^\d]{0,100}?\$?\s*([\d]{1,3}(?:[.,]\d{3})*(?:[.,]\d{2}))/i,
+    /previous\s+weeks?'?\s+earnings[^\d]{0,100}?\$?\s*([\d]{1,3}(?:[.,]\d{3})*(?:[.,]\d{2}))/i,
+    /unpaid\s+earnings[^\d]{0,100}?\$?\s*([\d]{1,3}(?:[.,]\d{3})*(?:[.,]\d{2}))/i,
+    /from\s+prior\s+weeks?[^\d]{0,100}?\$?\s*([\d]{1,3}(?:[.,]\d{3})*(?:[.,]\d{2}))/i,
+    /reported\s+from\s+prior[^\d]{0,100}?\$?\s*([\d]{1,3}(?:[.,]\d{3})*(?:[.,]\d{2}))/i,
   ];
   for (const re of prevPatterns) {
-    const m = flat.match(re);
+    const m = hay.match(re);
     if (m) {
       prev = parseNum(m[1]);
       break;
@@ -136,70 +186,123 @@ function parseUberStatementPlainText(text) {
 
   let expenses = 0;
   const expPatterns = [
-    /Expenses,?\s+refunds,?\s+and\s+taxes[^\d$-]{0,40}-\s*\$?\s*([\d.,]+)/i,
-    /Expenses,?\s+refunds,?\s+and\s+taxes[^\d]{0,50}\$\s*-\s*([\d.,]+)/i,
-    /Expenses,?\s+refunds[^\d]{0,100}-\s*\$?\s*([\d.,]+)/i,
-    /Expenses,?\s+refunds[^\d]{0,100}\$\s*([\d.,]+)/i,
-    /Uber\s+fees?[^\d]{0,50}\$\s*([\d.,]+)/i,
-    /Service\s+fees?[^\d]{0,50}\$\s*([\d.,]+)/i,
-    /Platform\s+fee[^\d]{0,50}\$\s*([\d.,]+)/i,
-    /D[ée]penses,?\s+remboursements[^\d]{0,80}\$\s*([\d.,]+)/i,
+    /expenses,?\s+refunds,?\s+and\s+taxes[^\d]{0,140}?-\s*\$?\s*([\d]{1,3}(?:[.,]\d{3})*(?:[.,]\d{2}))/i,
+    /expenses,?\s+refunds,?\s+and\s+taxes[^\d]{0,140}?\$\s*-\s*([\d]{1,3}(?:[.,]\d{3})*(?:[.,]\d{2}))/i,
+    /expenses,?\s+refunds[^\d]{0,160}?-\s*\$?\s*([\d]{1,3}(?:[.,]\d{3})*(?:[.,]\d{2}))/i,
+    /refunds?\s+and\s+taxes[^\d]{0,140}?-\s*\$?\s*([\d]{1,3}(?:[.,]\d{3})*(?:[.,]\d{2}))/i,
+    /total\s+fees[^\d]{0,100}?\$?\s*([\d]{1,3}(?:[.,]\d{3})*(?:[.,]\d{2}))/i,
+    /uber\s+fees?[^\d]{0,100}?\$?\s*([\d]{1,3}(?:[.,]\d{3})*(?:[.,]\d{2}))/i,
+    /service\s+fees?[^\d]{0,100}?\$?\s*([\d]{1,3}(?:[.,]\d{3})*(?:[.,]\d{2}))/i,
+    /platform\s+fee[^\d]{0,100}?\$?\s*([\d]{1,3}(?:[.,]\d{3})*(?:[.,]\d{2}))/i,
+    /d[ée]penses,?\s+remboursements[^\d]{0,120}?\$?\s*([\d]{1,3}(?:[.,]\d{3})*(?:[.,]\d{2}))/i,
+    /frais\s+uber[^\d]{0,100}?\$?\s*([\d]{1,3}(?:[.,]\d{3})*(?:[.,]\d{2}))/i,
   ];
   for (const re of expPatterns) {
-    const m = flat.match(re);
+    const m = hay.match(re);
     if (m) {
       expenses = Math.abs(parseNum(m[1]));
       break;
     }
   }
-  if (expenses === 0) {
-    const exIdx = flat.search(/Expenses,?\s+refunds/i);
-    if (exIdx >= 0) {
-      const slice = flat.slice(exIdx, exIdx + 220);
-      const neg = slice.match(/-\s*\$?\s*([\d.,]+)/);
-      if (neg) expenses = Math.abs(parseNum(neg[1]));
-      else {
-        const pos = slice.match(/\$\s*([\d.,]+)/);
-        if (pos) expenses = Math.abs(parseNum(pos[1]));
-      }
+  if (!expenses) {
+    expenses = uberFindAfterKeywords(hay, [
+      "expenses, refunds, and taxes",
+      "expenses, refunds",
+      "refunds and taxes",
+      "total fees",
+      "uber fees",
+      "service fee",
+    ]);
+  }
+  if (!expenses && /expenses,?\s+refunds/i.test(hayLo)) {
+    const exIdx = hayLo.search(/expenses,?\s+refunds/i);
+    const slice = hay.slice(exIdx, exIdx + 240);
+    const neg = slice.match(/-\s*\$?\s*([\d]{1,3}(?:[.,]\d{3})*(?:[.,]\d{2}))/);
+    if (neg) expenses = Math.abs(parseNum(neg[1]));
+    else {
+      const pos = slice.match(/\$\s*([\d]{1,3}(?:[.,]\d{3})*(?:[.,]\d{2}))/);
+      if (pos) expenses = Math.abs(parseNum(pos[1]));
     }
   }
 
   let total = 0;
   const totalPatterns = [
-    /Amount\s+transferred[^\d]{0,100}\$\s*([\d.,]+)/i,
-    /Amount\s+paid\s+to\s+you[^\d]{0,100}\$\s*([\d.,]+)/i,
-    /Net\s+payout[^\d]{0,60}\$\s*([\d.,]+)/i,
-    /Total\s+payout[^\d]{0,60}\$\s*([\d.,]+)/i,
+    /amount\s+transferred[^\d]{0,140}?\$?\s*([\d]{1,3}(?:[.,]\d{3})*(?:[.,]\d{2}))/i,
+    /amount\s+paid\s+to\s+you[^\d]{0,140}?\$?\s*([\d]{1,3}(?:[.,]\d{3})*(?:[.,]\d{2}))/i,
+    /net\s+payout[^\d]{0,100}?\$?\s*([\d]{1,3}(?:[.,]\d{3})*(?:[.,]\d{2}))/i,
+    /total\s+payout[^\d]{0,100}?\$?\s*([\d]{1,3}(?:[.,]\d{3})*(?:[.,]\d{2}))/i,
+    /paid\s+to\s+your[^\d]{0,140}?\$?\s*([\d]{1,3}(?:[.,]\d{3})*(?:[.,]\d{2}))/i,
+    /deposit[^\d]{0,80}?\$?\s*([\d]{1,3}(?:[.,]\d{3})*(?:[.,]\d{2}))/i,
+    /montant\s+vers[ée][^\d]{0,120}?\$?\s*([\d]{1,3}(?:[.,]\d{3})*(?:[.,]\d{2}))/i,
   ];
   for (const re of totalPatterns) {
-    const m = flat.match(re);
+    const m = hay.match(re);
     if (m) {
       total = parseNum(m[1]);
       break;
     }
   }
+  if (!total) {
+    total = uberFindAfterKeywords(hay, [
+      "amount transferred",
+      "net payout",
+      "total payout",
+      "amount paid to you",
+    ]);
+  }
 
   let period_start = "";
   let period_end = "";
-  const isoRange = flat.match(/(\d{4}-\d{2}-\d{2})\s*[-–]\s*(\d{4}-\d{2}-\d{2})/);
+  const isoRange = hay.match(/(\d{4}-\d{2}-\d{2})\s*[-–]\s*(\d{4}-\d{2}-\d{2})/);
   if (isoRange) {
     period_start = isoRange[1];
     period_end = isoRange[2];
   } else {
-    const usRange = flat.match(
+    const usRange = hay.match(
       /(\d{1,2})\/(\d{1,2})\/(\d{4})\s*[-–]\s*(\d{1,2})\/(\d{1,2})\/(\d{4})/
     );
     if (usRange) {
       period_start = `${usRange[3]}-${usRange[1].padStart(2, "0")}-${usRange[2].padStart(2, "0")}`;
       period_end = `${usRange[6]}-${usRange[4].padStart(2, "0")}-${usRange[5].padStart(2, "0")}`;
+    } else {
+      const mon = {
+        jan: 1,
+        feb: 2,
+        mar: 3,
+        apr: 4,
+        may: 5,
+        jun: 6,
+        jul: 7,
+        aug: 8,
+        sep: 9,
+        oct: 10,
+        nov: 11,
+        dec: 12,
+      };
+      const mr = hay.match(
+        /(\w{3})\s+(\d{1,2}),?\s+(\d{4})\s*[-–]\s*(\w{3})\s+(\d{1,2}),?\s+(\d{4})/i
+      );
+      if (mr) {
+        const m1 = mon[mr[1].toLowerCase().slice(0, 3)];
+        const m2 = mon[mr[4].toLowerCase().slice(0, 3)];
+        if (m1 && m2) {
+          period_start = `${mr[3]}-${String(m1).padStart(2, "0")}-${String(mr[2]).padStart(2, "0")}`;
+          period_end = `${mr[6]}-${String(m2).padStart(2, "0")}-${String(mr[5]).padStart(2, "0")}`;
+        }
+      }
     }
   }
   if (!period_end) period_end = new Date().toISOString().split("T")[0];
   if (!period_start) period_start = period_end;
 
-  if (!total && (earnings || expenses)) {
+  if (!total && earnings > 0 && expenses >= 0) {
     total = Math.round((earnings - expenses) * 100) / 100;
+  }
+  if (!earnings && total > 0 && expenses >= 0) {
+    earnings = Math.round((total + expenses) * 100) / 100;
+  }
+  if (!expenses && earnings > 0 && total > 0 && earnings > total) {
+    expenses = Math.round((earnings - total) * 100) / 100;
   }
 
   return { earnings, expenses, total, period_start, period_end };
@@ -534,10 +637,17 @@ export default function FinansApp() {
     try {
       const arrayBuffer = await file.arrayBuffer();
       const pdfText = await extractPdfTextFromBuffer(arrayBuffer);
+      if (!pdfText || pdfText.replace(/\s/g, "").length < 25) {
+        throw new Error(
+          "PDF'de seçilebilir metin yok (taranmış görsel olabilir). Uygulamadan indirdiğin metin içeren ekstreyle deneyin."
+        );
+      }
       const { earnings, expenses, total, period_start, period_end } = parseUberStatementPlainText(pdfText);
-      if (import.meta.env.DEV) console.log("[PDF] parse:", { earnings, expenses, total, period_start, period_end }, pdfText.slice(0, 400));
+      if (import.meta.env.DEV) console.log("[PDF] parse:", { earnings, expenses, total, period_start, period_end }, pdfText.slice(0, 800));
       if (earnings === 0 && expenses === 0) {
-        throw new Error("Kazanç veya gider satırı bulunamadı (PDF metni farklı formatta olabilir)");
+        throw new Error(
+          "Kazanç veya gider satırı bulunamadı (ekstre şablonu veya dil farklı olabilir)."
+        );
       }
       setUberResult({ earnings, expenses, total, period_start, period_end });
     } catch(err) {
