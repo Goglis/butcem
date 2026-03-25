@@ -56,6 +56,29 @@ const PDFJS_MAIN =
 const PDFJS_WORKER =
   "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.8.69/build/pdf.worker.mjs";
 
+
+function pdfPageItemsToReadingOrder(items) {
+  const withPos = items
+    .filter((it) => "str" in it && it.str && String(it.str).trim())
+    .map((it) => {
+      const t = it.transform;
+      return { str: it.str, x: t[4], y: t[5] };
+    });
+  withPos.sort((a, b) => {
+    if (Math.abs(a.y - b.y) > 4) return b.y - a.y;
+    return a.x - b.x;
+  });
+  let out = "";
+  let lastY = withPos.length ? withPos[0].y : 0;
+  for (const it of withPos) {
+    if (Math.abs(it.y - lastY) > 4) {
+      out += "\n";
+      lastY = it.y;
+    }
+    out += it.str + " ";
+  }
+  return out;
+}
 async function extractPdfTextFromBuffer(arrayBuffer) {
   const mod = await import(/* @vite-ignore */ PDFJS_MAIN);
   const getDocument = mod.getDocument;
@@ -67,10 +90,7 @@ async function extractPdfTextFromBuffer(arrayBuffer) {
   for (let p = 1; p <= pdf.numPages; p++) {
     const page = await pdf.getPage(p);
     const content = await page.getTextContent();
-    for (const item of content.items) {
-      if ("str" in item && item.str) full += item.str + " ";
-    }
-    full += "\n";
+    full += pdfPageItemsToReadingOrder(content.items) + "\n";
   }
   return full;
 }
@@ -81,7 +101,7 @@ function uberMoneyInWindow(haystack, startIdx, winLen) {
   const tries = [
     /-\s*\$?\s*([\d]{1,3}(?:[.,]\d{3})*(?:[.,]\d{2}))/,
     /\$\s*-\s*([\d]{1,3}(?:[.,]\d{3})*(?:[.,]\d{2}))/,
-    /(?:CAD|USD)\s*\$?\s*([\d]{1,3}(?:[.,]\d{3})*(?:[.,]\d{2}))/i,
+    /(?:CA\$|CAD|USD)\s*\$?\s*([\d]{1,3}(?:[.,]\d{3})*(?:[.,]\d{2}))/i,
     /\$?\s*([\d]{1,3}(?:[.,]\d{3})*(?:[.,]\d{2}))/,
     /\b([\d]{1,3}(?:[.,]\d{3})*(?:\.\d{2}))\b/,
   ];
@@ -95,7 +115,7 @@ function uberMoneyInWindow(haystack, startIdx, winLen) {
   return null;
 }
 
-function uberFindAfterKeywords(haystack, keywords, window = 160) {
+function uberFindAfterKeywords(haystack, keywords, window = 320) {
   const lower = haystack.toLowerCase();
   for (const kw of keywords) {
     const k = kw.toLowerCase();
@@ -110,6 +130,29 @@ function uberFindAfterKeywords(haystack, keywords, window = 160) {
   return 0;
 }
 
+
+/** Son care: Uber metninde en buyuk iki tutari brut / net gibi yorumla */
+function uberFallbackGrossNetFromAmounts(hay) {
+  if (!/uber|driver|partner|weekly|payout|earn|statement|payment/i.test(hay)) return null;
+  const amounts = [];
+  const re = /\b(?:CA\$|CAD|\$|€)?\s*([\d]{1,3}(?:[.,]\d{3})*(?:[.,]\d{2}))\b/gi;
+  let m;
+  while ((m = re.exec(hay)) !== null) {
+    const v = parseNum(m[1]);
+    if (v >= 1 && v < 1e6) amounts.push(v);
+  }
+  const uniq = [...new Set(amounts.map((v) => Math.round(v * 100) / 100))].sort((a, b) => b - a);
+  if (uniq.length < 2) return null;
+  const a0 = uniq[0];
+  const a1 = uniq[1];
+  const diff = a0 - a1;
+  if (diff <= 0 || diff >= a0 * 0.45) return null;
+  if (a1 < a0 * 0.2) return null;
+  const earnings = a0;
+  const total = a1;
+  const expenses = Math.round(diff * 100) / 100;
+  return { earnings, expenses, total };
+}
 /** Uber ekstre PDF metninden kazanç / gider (EN/FR; PDF düzeni kırık olsa da) */
 function parseUberStatementPlainText(text) {
   const raw = text.replace(/\u00a0/g, " ");
@@ -148,6 +191,7 @@ function parseUberStatementPlainText(text) {
     /\bearnings\b[^\d$]{0,80}?\$?\s*([\d]{1,3}(?:[.,]\d{3})*(?:[.,]\d{2}))/i,
     /vos\s+revenus[^\d]{0,120}?\$?\s*([\d]{1,3}(?:[.,]\d{3})*(?:[.,]\d{2}))/i,
     /revenus\s+totaux[^\d]{0,120}?\$?\s*([\d]{1,3}(?:[.,]\d{3})*(?:[.,]\d{2}))/i,
+    /(?:you\s+earned|payment\s+summary|driver\s+summary)[^\d]{0,160}?\$?\s*([\d]{1,3}(?:[.,]\d{3})*(?:[.,]\d{2}))/i,
   ];
   for (const re of earnPatterns) {
     const m = hay.match(re);
@@ -164,6 +208,9 @@ function parseUberStatementPlainText(text) {
       "trip earnings",
       "earnings this week",
       "weekly earnings",
+      "you earned",
+      "payment summary",
+      "driver earnings",
     ]);
   }
 
@@ -248,10 +295,13 @@ function parseUberStatementPlainText(text) {
       "net payout",
       "total payout",
       "amount paid to you",
+      "you received",
+      "paid to your",
+      "payment to you",
     ]);
   }
 
-  let period_start = "";
+let period_start = "";
   let period_end = "";
   const isoRange = hay.match(/(\d{4}-\d{2}-\d{2})\s*[-–]\s*(\d{4}-\d{2}-\d{2})/);
   if (isoRange) {
@@ -303,6 +353,15 @@ function parseUberStatementPlainText(text) {
   }
   if (!expenses && earnings > 0 && total > 0 && earnings > total) {
     expenses = Math.round((earnings - total) * 100) / 100;
+  }
+
+  if (earnings === 0 && expenses === 0) {
+    const fb = uberFallbackGrossNetFromAmounts(hay);
+    if (fb) {
+      earnings = fb.earnings;
+      expenses = fb.expenses;
+      total = fb.total;
+    }
   }
 
   return { earnings, expenses, total, period_start, period_end };
