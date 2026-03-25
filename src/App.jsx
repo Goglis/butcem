@@ -159,16 +159,38 @@ function parseUberStatementPlainText(text) {
   const flat = raw.replace(/[\t ]+/g, " ").trim();
   const oneLine = raw.replace(/\s+/g, " ").trim();
 
-  // Turkce Uber ozet satirlari:
-  // Kazanclariniz / Para iadeleri ve Giderler / Onceki haftalardaki etkinlikler / Odemeler
-  const trEarn = oneLine.match(/Kazan[çc]lar[ıi]n[ıi]z[^\d]{0,120}CA\$?\s*([\d.,]+)/i);
-  const trExp = oneLine.match(/Para\s+iadeleri\s+ve\s+Giderler[^\d]{0,120}CA\$?\s*([\d.,]+)/i);
-  const trPrev = oneLine.match(/[ÖO]nceki\s+haftalardaki\s+etkinlikler[^\d]{0,140}CA\$?\s*([\d.,]+)/i);
-  const trPay = oneLine.match(/[ÖO]demeler[^\d]{0,120}CA\$?\s*([\d.,]+)/i);
+  // Turkce Uber ozet — JS /i bayragi "İ" ile "i"yi eslestirmez; İadeler / Kazançlar vb. acik yazilmali
+  const trEarn =
+    oneLine.match(/Kazan[çc][ıiİ]lar[ıiİ]n[ıiİ]z[^\d]{0,160}?CA\$?\s*([\d.,]+)/i) ||
+    oneLine.match(/Kazan[çc]lar[ıiİ]n[ıiİ]z[^\d]{0,160}?CA\$?\s*([\d.,]+)/i);
+  let trExp = oneLine.match(
+    /Para\s+[İIıi]?adeleri\s+ve\s+[Gg]iderler[^\d]{0,200}?CA\$?\s*([\d.,]+)/
+  );
+  if (!trExp) {
+    trExp = oneLine.match(
+      /Para\s+[İIıi]?adeleri\s+ve\s+[Gg]iderler[^\d]{0,400}?([\d]{1,3}(?:\.\d{3})*(?:,\d{2})|[\d]+,\d{2})/
+    );
+  }
+  const trPrev = oneLine.match(
+    /[ÖOö]?nceki\s+haftalardaki\s+etkinlikler[^\d]{0,220}?CA\$?\s*([\d.,]+)/i
+  );
+  const trPay =
+    oneLine.match(/[ÖOö]?demeler[^\d]{0,200}?CA\$?\s*([\d.,]+)/i) ||
+    oneLine.match(/[ÖOö]?demeler[^\d]{0,400}?([\d]{1,3}(?:\.\d{3})*(?:,\d{2})|[\d]+,\d{2})/i);
+
   if (trEarn || trExp || trPay) {
-    const trEarnings = parseNum(trEarn?.[1] || 0) + parseNum(trPrev?.[1] || 0);
-    const trExpenses = parseNum(trExp?.[1] || 0);
+    let trEarnings = parseNum(trEarn?.[1] || 0) + parseNum(trPrev?.[1] || 0);
+    let trExpenses = parseNum(trExp?.[1] || 0);
     let trTotal = parseNum(trPay?.[1] || 0);
+    if (!trExpenses) {
+      trExpenses = uberFindAfterKeywords(oneLine, [
+        "Para İadeleri ve Giderler",
+        "Para Iadeleri ve Giderler",
+        "Para iadeleri ve Giderler",
+        "Para iadeleri ve giderler",
+        "iadeleri ve Giderler",
+      ], 420);
+    }
 
     // "16 Mar 2026 04 - 23 Mar 2026 00" formati
     let period_start = "";
@@ -190,7 +212,9 @@ function parseUberStatementPlainText(text) {
     }
     if (!period_end) period_end = new Date().toISOString().split("T")[0];
     if (!period_start) period_start = period_end;
-    if (!trTotal && (trEarnings || trExpenses)) trTotal = Math.round((trEarnings + trExpenses) * 100) / 100;
+    if (!trTotal && trEarnings > 0 && trExpenses >= 0) {
+      trTotal = Math.round((trEarnings - trExpenses) * 100) / 100;
+    }
 
     return {
       earnings: Math.round(trEarnings * 100) / 100,
