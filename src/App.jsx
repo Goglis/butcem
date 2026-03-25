@@ -32,37 +32,204 @@ const CATEGORIES = {
 const MONTHS = ["Oca","Şub","Mar","Nis","May","Haz","Tem","Ağu","Eyl","Eki","Kas","Ara"];
 const EMPTY_FORM = { type: "gider", category: "market", amount: "", desc: "", date: new Date().toISOString().split("T")[0], isUber: false };
 
-/** Yeni API anahtarlarında 1.5 / eski 2.0 sonekleri sık 404 verir; güncel 2.5 ailesi + v1/v1beta */
-const GEMINI_API_VERSIONS = ["v1", "v1beta"];
-const GEMINI_MODEL_FALLBACKS = [
-  "gemini-2.5-flash",
-  "gemini-2.5-flash-lite",
-  "gemini-2.5-pro",
-  "gemini-2.0-flash",
-  "gemini-flash-latest",
-];
+/** PDF / fiş tutarları (Uber ekstre + OCR) */
+function parseNum(str) {
+  if (str == null || str === "") return 0;
+  let s = String(str).trim();
+  if (!s) return 0;
+  if (s.includes(".") && s.includes(",")) {
+    return parseFloat(s.replace(/\./g, "").replace(",", ".")) || 0;
+  }
+  if (s.includes(",")) {
+    const parts = s.split(",");
+    if (parts[1] && parts[1].length === 3 && !parts[2]) {
+      return parseFloat(s.replace(/,/g, "")) || 0;
+    }
+    return parseFloat(s.replace(",", ".")) || 0;
+  }
+  return parseFloat(s) || 0;
+}
 
-async function geminiGenerateContent(body) {
-  const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
-  if (!apiKey) throw new Error("VITE_GEMINI_API_KEY tanımlı değil");
-  let lastErr = "";
-  for (const ver of GEMINI_API_VERSIONS) {
-    for (const model of GEMINI_MODEL_FALLBACKS) {
-      const url = `https://generativelanguage.googleapis.com/${ver}/models/${model}:generateContent?key=${apiKey}`;
-      const res = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      const data = await res.json();
-      if (res.ok && data.candidates?.[0]?.content?.parts?.length) {
-        return data;
-      }
-      lastErr = data?.error?.message || `${res.status} ${res.statusText}`;
-      console.warn(`[Gemini] ${ver}/${model}:`, lastErr);
+async function extractPdfTextFromBuffer(arrayBuffer) {
+  const mod = await import(
+    /* @vite-ignore */
+    "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.mjs"
+  );
+  const pdfjs = mod.default?.getDocument ? mod.default : mod;
+  pdfjs.GlobalWorkerOptions.workerSrc =
+    "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.mjs";
+  const pdf = await pdfjs.getDocument({ data: arrayBuffer }).promise;
+  let full = "";
+  for (let p = 1; p <= pdf.numPages; p++) {
+    const page = await pdf.getPage(p);
+    const content = await page.getTextContent();
+    for (const item of content.items) {
+      if ("str" in item && item.str) full += item.str + " ";
+    }
+    full += "\n";
+  }
+  return full;
+}
+
+/** Uber ekstre PDF metninden kazanç / gider (İngilizce, Fransızca; eski KAZANC: satırları) */
+function parseUberStatementPlainText(text) {
+  const flat = text
+    .replace(/\u00a0/g, " ")
+    .replace(/\r\n/g, "\n")
+    .replace(/[\t ]+/g, " ")
+    .trim();
+
+  const k = flat.match(/KAZANC:\s*([\d.,]+)/i);
+  const o = flat.match(/ONCEKI:\s*([\d.,]+)/i);
+  const g = flat.match(/GIDER:\s*([\d.,]+)/i);
+  const totM = flat.match(/TOPLAM:\s*([\d.,]+)/i);
+  const bs = flat.match(/BASLANGIC:(\d{4}-\d{2}-\d{2})/i);
+  const be = flat.match(/BITIS:(\d{4}-\d{2}-\d{2})/i);
+  if (k || g || totM) {
+    let earnings = (k ? parseNum(k[1]) : 0) + (o ? parseNum(o[1]) : 0);
+    const expenses = g ? parseNum(g[1]) : 0;
+    let total = totM ? parseNum(totM[1]) : 0;
+    let period_start = bs ? bs[1] : "";
+    let period_end = be ? be[1] : "";
+    earnings = Math.round(earnings * 100) / 100;
+    if (!period_end) period_end = new Date().toISOString().split("T")[0];
+    if (!period_start) period_start = period_end;
+    if (!total && (earnings || expenses)) total = Math.round((earnings - expenses) * 100) / 100;
+    return { earnings, expenses, total, period_start, period_end };
+  }
+
+  let earnings = 0;
+  const earnPatterns = [
+    /Your\s+earnings[^\d]{0,40}\$\s*([\d.,]+)/i,
+    /Your\s+earnings\s+([\d.,]+)/i,
+    /Trip\s+earnings[^\d]{0,60}\$\s*([\d.,]+)/i,
+    /\bEarnings\b[^\d$]{0,50}\$\s*([\d.,]+)/i,
+    /Vos\s+revenus[^\d]{0,50}\$\s*([\d.,]+)/i,
+    /Vos\s+gains[^\d]{0,50}\$\s*([\d.,]+)/i,
+  ];
+  for (const re of earnPatterns) {
+    const m = flat.match(re);
+    if (m) {
+      earnings = parseNum(m[1]);
+      break;
     }
   }
-  throw new Error(lastErr || "Gemini yanıt vermedi");
+
+  let prev = 0;
+  const prevPatterns = [
+    /Previous\s+weeks?'?\s+unpaid\s+earnings[^\d]{0,50}\$\s*([\d.,]+)/i,
+    /Previous\s+weeks?'?\s+earnings[^\d]{0,50}\$\s*([\d.,]+)/i,
+    /from\s+prior\s+weeks?[^\d]{0,60}\$\s*([\d.,]+)/i,
+  ];
+  for (const re of prevPatterns) {
+    const m = flat.match(re);
+    if (m) {
+      prev = parseNum(m[1]);
+      break;
+    }
+  }
+  earnings = Math.round((earnings + prev) * 100) / 100;
+
+  let expenses = 0;
+  const expPatterns = [
+    /Expenses,?\s+refunds,?\s+and\s+taxes[^\d$-]{0,40}-\s*\$?\s*([\d.,]+)/i,
+    /Expenses,?\s+refunds,?\s+and\s+taxes[^\d]{0,50}\$\s*-\s*([\d.,]+)/i,
+    /Expenses,?\s+refunds[^\d]{0,100}-\s*\$?\s*([\d.,]+)/i,
+    /Expenses,?\s+refunds[^\d]{0,100}\$\s*([\d.,]+)/i,
+    /Uber\s+fees?[^\d]{0,50}\$\s*([\d.,]+)/i,
+    /Service\s+fees?[^\d]{0,50}\$\s*([\d.,]+)/i,
+    /Platform\s+fee[^\d]{0,50}\$\s*([\d.,]+)/i,
+    /D[ée]penses,?\s+remboursements[^\d]{0,80}\$\s*([\d.,]+)/i,
+  ];
+  for (const re of expPatterns) {
+    const m = flat.match(re);
+    if (m) {
+      expenses = Math.abs(parseNum(m[1]));
+      break;
+    }
+  }
+  if (expenses === 0) {
+    const exIdx = flat.search(/Expenses,?\s+refunds/i);
+    if (exIdx >= 0) {
+      const slice = flat.slice(exIdx, exIdx + 220);
+      const neg = slice.match(/-\s*\$?\s*([\d.,]+)/);
+      if (neg) expenses = Math.abs(parseNum(neg[1]));
+      else {
+        const pos = slice.match(/\$\s*([\d.,]+)/);
+        if (pos) expenses = Math.abs(parseNum(pos[1]));
+      }
+    }
+  }
+
+  let total = 0;
+  const totalPatterns = [
+    /Amount\s+transferred[^\d]{0,100}\$\s*([\d.,]+)/i,
+    /Amount\s+paid\s+to\s+you[^\d]{0,100}\$\s*([\d.,]+)/i,
+    /Net\s+payout[^\d]{0,60}\$\s*([\d.,]+)/i,
+    /Total\s+payout[^\d]{0,60}\$\s*([\d.,]+)/i,
+  ];
+  for (const re of totalPatterns) {
+    const m = flat.match(re);
+    if (m) {
+      total = parseNum(m[1]);
+      break;
+    }
+  }
+
+  let period_start = "";
+  let period_end = "";
+  const isoRange = flat.match(/(\d{4}-\d{2}-\d{2})\s*[-–]\s*(\d{4}-\d{2}-\d{2})/);
+  if (isoRange) {
+    period_start = isoRange[1];
+    period_end = isoRange[2];
+  } else {
+    const usRange = flat.match(
+      /(\d{1,2})\/(\d{1,2})\/(\d{4})\s*[-–]\s*(\d{1,2})\/(\d{1,2})\/(\d{4})/
+    );
+    if (usRange) {
+      period_start = `${usRange[3]}-${usRange[1].padStart(2, "0")}-${usRange[2].padStart(2, "0")}`;
+      period_end = `${usRange[6]}-${usRange[4].padStart(2, "0")}-${usRange[5].padStart(2, "0")}`;
+    }
+  }
+  if (!period_end) period_end = new Date().toISOString().split("T")[0];
+  if (!period_start) period_start = period_end;
+
+  if (!total && (earnings || expenses)) {
+    total = Math.round((earnings - expenses) * 100) / 100;
+  }
+
+  return { earnings, expenses, total, period_start, period_end };
+}
+
+function parseReceiptOcrText(raw) {
+  const text = raw.replace(/\u00a0/g, " ");
+  let amount = 0;
+  const totalRe =
+    /(?:TOTAL|TOTALE|TOT\.|AMOUNT\s+DUE|BALANCE|AMOUNT|TOPLAM)\s*[**:]*\s*\$?\s*([\d,]+\.?\d{0,2})/gi;
+  const found = [];
+  let m;
+  while ((m = totalRe.exec(text)) !== null) found.push(parseNum(m[1]));
+  if (found.length) amount = Math.max(...found);
+  if (!amount) {
+    const all = [...text.matchAll(/\$?\s*(\d{1,5}[.,]\d{2})\b/g)].map((x) => parseNum(x[1]));
+    if (all.length) amount = all[all.length - 1];
+  }
+  let date = new Date().toISOString().split("T")[0];
+  const ymd = text.match(/\b(\d{4})[/-](\d{2})[/-](\d{2})\b/);
+  const dmy = text.match(/\b(\d{2})[/-](\d{2})[/-](\d{4})\b/);
+  if (ymd) date = `${ymd[1]}-${ymd[2]}-${ymd[3]}`;
+  else if (dmy) date = `${dmy[3]}-${dmy[1]}-${dmy[2]}`;
+
+  const lower = text.toLowerCase();
+  let category = "diger_gider";
+  if (/uber|lyft|taxi/.test(lower)) category = "ulasim";
+  else if (/walmart|costco|loblaws|metro|sobeys|canadian\s+tire/.test(lower)) category = "market";
+  else if (/restaurant|cafe|tim\s*horton|mcdonald|starbucks/.test(lower)) category = "yemek";
+
+  const line = text.split("\n").map((l) => l.trim()).find((l) => l.length > 3 && !/^\d+[.,]\d{2}$/.test(l));
+  const desc = (line || "Fiş").slice(0, 80);
+
+  return { amount, date, category, desc };
 }
 
 function fmt(n) {
@@ -308,31 +475,21 @@ export default function FinansApp() {
   const handleReceiptUpload = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
-    let mediaType = file.type || "image/jpeg";
-    if (!["image/jpeg","image/png","image/gif","image/webp"].includes(mediaType)) mediaType = "image/jpeg";
     const reader = new FileReader();
     reader.onload = async (ev) => {
       setReceiptPreview(ev.target.result);
       setOcrLoading(true);
       try {
-        const base64 = ev.target.result.split(",")[1];
-        const data = await geminiGenerateContent({
-          contents: [
-            {
-              parts: [
-                { inline_data: { mime_type: mediaType, data: base64 } },
-                {
-                  text: `Fisteki toplam tutari bul. Sadece JSON yaz: {"amount":36.73,"desc":"Canadian Tire","category":"market","date":"2026-03-22"}\nKategori: market, yemek, faturalar, ulasim, saglik, eglence, giyim, egitim, kira, diger_gider\nBugun: ${new Date().toISOString().split("T")[0]}\nSADECE JSON, baska hicbir sey yazma.`,
-                },
-              ],
-            },
-          ],
-          generationConfig: { temperature: 0, maxOutputTokens: 1000 },
-        });
-        const text = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
-        const start = text.indexOf("{"); const end = text.lastIndexOf("}");
-        if (start === -1) throw new Error("JSON yok");
-        const parsed = JSON.parse(text.substring(start, end+1));
+        const { createWorker } = await import(
+          /* @vite-ignore */
+          "https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/+esm"
+        );
+        const worker = await createWorker(["eng", "fra"], 1, { logger: () => {} });
+        const {
+          data: { text },
+        } = await worker.recognize(ev.target.result);
+        await worker.terminate();
+        const parsed = parseReceiptOcrText(text);
         if (!parsed.amount || parsed.amount <= 0) throw new Error("Tutar yok");
         setForm((f) => ({
           ...f,
@@ -344,8 +501,10 @@ export default function FinansApp() {
           isUber: !!f.isUber,
         }));
         playBeep();
-        showNotif("✅ Fiş okundu! Kontrol et ve ekle.");
-      } catch { showNotif("Fiş okunamadı, manuel gir", "#FF9F0A"); }
+        showNotif("✅ Fiş okundu (OCR). Kontrol et ve ekle.");
+      } catch {
+        showNotif("Fiş okunamadı, manuel gir", "#FF9F0A");
+      }
       setOcrLoading(false);
     };
     reader.readAsDataURL(file);
@@ -370,76 +529,12 @@ export default function FinansApp() {
     setUberResult(null);
     try {
       const arrayBuffer = await file.arrayBuffer();
-      const bytes = new Uint8Array(arrayBuffer);
-      // Chunk chunk base64'e çevir
-      let binary = "";
-      for (let i = 0; i < bytes.length; i += 8192) {
-        binary += String.fromCharCode(...bytes.subarray(i, i + 8192));
+      const pdfText = await extractPdfTextFromBuffer(arrayBuffer);
+      const { earnings, expenses, total, period_start, period_end } = parseUberStatementPlainText(pdfText);
+      if (import.meta.env.DEV) console.log("[PDF] parse:", { earnings, expenses, total, period_start, period_end }, pdfText.slice(0, 400));
+      if (earnings === 0 && expenses === 0) {
+        throw new Error("Kazanç veya gider satırı bulunamadı (PDF metni farklı formatta olabilir)");
       }
-      const base64 = btoa(binary);
-
-      const data = await geminiGenerateContent({
-        contents: [
-          {
-            parts: [
-              { inline_data: { mime_type: "application/pdf", data: base64 } },
-              {
-                text: `Uber ekstre PDF. Her satira bir deger yaz:
-KAZANC:945.95
-ONCEKI:4.92
-GIDER:66.27
-TOPLAM:1017.14
-BASLANGIC:2026-03-16
-BITIS:2026-03-23
-Sadece bu formatta yaz, baska hicbir sey ekleme.`,
-              },
-            ],
-          },
-        ],
-        generationConfig: { temperature: 0, maxOutputTokens: 500 },
-      });
-      console.log("Gemini response:", JSON.stringify(data).substring(0, 300));
-      const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
-      const text = rawText.replace(/```json/gi, "").replace(/```/g, "").trim();
-      console.log("Temiz text:", text.substring(0, 200));
-      
-      // Sayıları çek - virgüllü format da dahil (1.424,98 veya 1424.98)
-      const parseNum = (str) => {
-        if (!str) return 0;
-        str = str.trim();
-        // Eğer hem nokta hem virgül varsa: 1.424,98 formatı (Türkçe)
-        if (str.includes(".") && str.includes(",")) {
-          return parseFloat(str.replace(/\./g, "").replace(",", ".")) || 0;
-        }
-        // Sadece virgül varsa: 1424,98 -> 1424.98
-        if (str.includes(",")) {
-          // Virgül ondalık mı binlik mi? 3 rakamdan fazlaysa binlik
-          const parts = str.split(",");
-          if (parts[1] && parts[1].length === 3) {
-            return parseFloat(str.replace(",", "")) || 0; // binlik
-          }
-          return parseFloat(str.replace(",", ".")) || 0; // ondalık
-        }
-        return parseFloat(str) || 0;
-      };
-
-      const earningsMatch = text.match(/KAZANC:([\d.,]+)/i);
-      const prevMatch = text.match(/ONCEKI:([\d.,]+)/i);
-      const expensesMatch = text.match(/GIDER:([\d.,]+)/i);
-      const totalMatch = text.match(/TOPLAM:([\d.,]+)/i);
-      const startMatch = text.match(/BASLANGIC:(\d{4}-\d{2}-\d{2})/i);
-      const endMatch = text.match(/BITIS:(\d{4}-\d{2}-\d{2})/i);
-
-      const earningsBase = earningsMatch ? parseNum(earningsMatch[1]) : 0;
-      const prevWeeks = prevMatch ? parseNum(prevMatch[1]) : 0;
-      const earnings = Math.round((earningsBase + prevWeeks) * 100) / 100;
-      const expenses = expensesMatch ? parseNum(expensesMatch[1]) : 0;
-      const total = totalMatch ? parseNum(totalMatch[1]) : earnings + expenses;
-      const period_start = startMatch ? startMatch[1] : new Date().toISOString().split("T")[0];
-      const period_end = endMatch ? endMatch[1] : new Date().toISOString().split("T")[0];
-
-      console.log("Parsed:", { earnings, expenses, total, period_start, period_end });
-      if (earnings === 0) throw new Error("Kazanç bulunamadı");
       setUberResult({ earnings, expenses, total, period_start, period_end });
     } catch(err) {
       console.error("PDF hatası:", err.message);
@@ -1059,7 +1154,7 @@ Sadece bu formatta yaz, baska hicbir sey ekleme.`,
               <div style={{textAlign:"center",padding:20}}>
                 <div style={{fontSize:48,marginBottom:16}}>🚗</div>
                 <div style={{fontSize:18,fontWeight:700,marginBottom:8}}>PDF Okunuyor...</div>
-                <div style={{color:"#8E8E93",fontSize:14}}>Uber ekstreniz analiz ediliyor</div>
+                <div style={{color:"#8E8E93",fontSize:14}}>PDF metni okunuyor (sunucuya gönderilmez)</div>
               </div>
             ) : uberResult ? (
               <div>
