@@ -50,15 +50,19 @@ function parseNum(str) {
   return parseFloat(s) || 0;
 }
 
+/** jsDelivr’da pdfjs-dist@3.x /build/pdf.mjs çoğu zaman 404; 4.8.x yolu stabil */
+const PDFJS_MAIN =
+  "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.8.69/build/pdf.mjs";
+const PDFJS_WORKER =
+  "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.8.69/build/pdf.worker.mjs";
+
 async function extractPdfTextFromBuffer(arrayBuffer) {
-  const mod = await import(
-    /* @vite-ignore */
-    "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.mjs"
-  );
-  const pdfjs = mod.default?.getDocument ? mod.default : mod;
-  pdfjs.GlobalWorkerOptions.workerSrc =
-    "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.mjs";
-  const pdf = await pdfjs.getDocument({ data: arrayBuffer }).promise;
+  const mod = await import(/* @vite-ignore */ PDFJS_MAIN);
+  const getDocument = mod.getDocument;
+  const { GlobalWorkerOptions } = mod;
+  if (!getDocument) throw new Error("pdf.js modülü geçersiz");
+  GlobalWorkerOptions.workerSrc = PDFJS_WORKER;
+  const pdf = await getDocument({ data: arrayBuffer }).promise;
   let full = "";
   for (let p = 1; p <= pdf.numPages; p++) {
     const page = await pdf.getPage(p);
